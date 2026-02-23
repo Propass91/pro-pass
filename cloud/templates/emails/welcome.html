@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 20px; background-color: #f4f4f4;">
+    <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 600px; margin: auto; border: 2px solid #2980b9; border-radius: 12px; overflow: hidden; background-color: white; color: #333;">
+        
+        <div style="background: linear-gradient(135deg, #2980b9 0%, #3498db 100%); padding: 35px 25px; text-align: center;">
+            <h1 style="color: white; margin: 0; font-size: 28px; font-weight: 600; text-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                🛡️ Bienvenue sur PROPASS
+            </h1>
+        </div>
+        
+        <div style="padding: 40px 30px;">
+            <p style="font-size: 18px; font-weight: bold; color: #2c3e50; margin-top: 0;">
+                Félicitations{{#if userName}}, {{userName}}{{/if}} ! Votre accès est activé.
+            </p>
+            
+            <p style="font-size: 15px; line-height: 1.7; color: #555;">
+                Votre gestionnaire de sécurité <strong>indépendant</strong> est prêt à protéger vos données sensibles. 
+                Voici les étapes pour démarrer en toute sécurité :
+            </p>
+            
+            <div style="margin-top: 30px; margin-bottom: 30px;">
+                <div style="display: flex; align-items: flex-start; margin-bottom: 20px;">
+                    <span style="background-color: #2980b9; color: white; border-radius: 50%; padding: 8px 13px; margin-right: 15px; font-weight: bold; flex-shrink: 0;">1</span>
+                    <div>
+                        <strong style="color: #2c3e50; font-size: 15px;">Lancez l'application PROPASS</strong>
+                        <p style="margin: 5px 0 0 0; font-size: 13px; color: #7f8c8d;">
+                            Double-cliquez sur l'icône PROPASS sur votre bureau ou dans le menu Démarrer.
+                        </p>
+                    </div>
+                </div>
+                
+                <div style="display: flex; align-items: flex-start; margin-bottom: 20px;">
+                    <span style="background-color: #2980b9; color: white; border-radius: 50%; padding: 8px 13px; margin-right: 15px; font-weight: bold; flex-shrink: 0;">2</span>
+                    <div>
+                        <strong style="color: #2c3e50; font-size: 15px;">Connectez-vous avec vos identifiants</strong>
+                        <div style="background: #f8f9fa; padding: 12px; margin-top: 8px; border-left: 4px solid #2980b9; border-radius: 4px;">
+                            <div style="font-size: 12px; color: #7f8c8d; margin-bottom: 5px;">Identifiant :</div>
+                            <span style="font-family: 'Courier New', monospace; font-size: 14px; color: #2c3e50; font-weight: 600;">{{clientEmail}}</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <div style="display: flex; align-items: flex-start; margin-bottom: 20px;">
+                    <span style="background-color: #2980b9; color: white; border-radius: 50%; padding: 8px 13px; margin-right: 15px; font-weight: bold; flex-shrink: 0;">3</span>
+                    <div>
+                        <strong style="color: #2c3e50; font-size: 15px;">Initialisez votre Master Key</strong>
+                        <p style="margin: 5px 0 0 0; font-size: 13px; color: #7f8c8d;">
+                            Lors de la première ouverture, créez une <strong>clé maître unique</strong>. 
+                            <span style="color: #e74c3c;">⚠️ Ne la perdez jamais</span> - nous ne pouvons pas la récupérer.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div style="background-color: #e8f4f8; padding: 20px; border-radius: 8px; border-left: 4px solid #3498db;">
+                <p style="margin: 0 0 10px 0; font-size: 14px; color: #2c3e50;">
+                    <strong>💡 Première fois avec PROPASS ?</strong>
+                </p>
+                <p style="margin: 0; font-size: 13px; color: #555; line-height: 1.6;">
+                    Consultez le fichier <code style="background: #fff; padding: 2px 6px; border-radius: 3px; font-size: 12px;">INSTALLATION.txt</code> 
+                    dans votre dossier d'installation pour un guide complet.
+                </p>
+            </div>
+
+            <p style="font-size: 13px; color: #7f8c8d; font-style: italic; margin-top: 30px; text-align: center;">
+                Besoin d'aide ? Notre équipe de support est disponible.
+            </p>
+        </div>
+
+        <div style="background-color: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #e0e0e0;">
+            <p style="font-size: 12px; color: #95a5a6; margin: 0;">
+                Propulsé par <strong style="color: #2c3e50;">PROPASS Cloud</strong> - Sécurité Indépendante
+            </p>
+            <p style="font-size: 10px; color: #bdc3c7; margin: 10px 0 0 0;">
+                {{currentYear}} © Tous droits réservés
+            </p>
+        </div>
+    </div>
+</body>
+</html>
