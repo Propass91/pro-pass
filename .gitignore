@@ -1,0 +1,44 @@
+# Node / Electron
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build artifacts
+/dist/
+/out/
+/build/Release/
+
+# Electron builder output
+*.exe
+*.exe.blockmap
+*.msi
+*.dmg
+*.zip
+
+# Local environment / secrets
+.env
+cloud/.env
+
+# Cloud local data (SQLite)
+cloud/data/
+*.db
+*.db-wal
+*.db-shm
+
+# Python build artifacts
+__pycache__/
+*.pyc
+
+# Local dumps / secrets
+VAULT/
+
+
+# Logs
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
