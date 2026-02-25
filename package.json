@@ -10,6 +10,8 @@
     "start": "electron .",
     "build": "node ./node_modules/esbuild/bin/esbuild ui_src/main.jsx --bundle --outfile=src/propass-ui.bundle.js --platform=browser --format=iife --jsx=automatic --sourcemap",
     "electron:dev": "electron .",
+    "electron:local": "electron .",
+    "electron:cloud": "set PROPASS_CLOUD_URL=https://www.pro-pass.app && electron .",
     "generate:icon": "node scripts/generate_icon.js",
     "generate:icon:rounded": "node scripts/round_logo.js && node scripts/generate_icon.js",
     "predist": "python -m compileall -b backend",
