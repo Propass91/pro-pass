@@ -1,0 +1,87 @@
+﻿PPC/
+├─ backend/
+│  ├─ nfc/
+│  │  ├─ dump.py
+│  │  ├─ presence_watch.py
+│  │  ├─ sync_pro_alpha.py
+│  │  └─ write.py
+│  └─ copy_process.py
+├─ cloud/
+│  ├─ data/
+│  │  └─ central.db
+│  ├─ .env.example
+│  ├─ auth.js
+│  ├─ db.js
+│  ├─ mail.js
+│  ├─ package.json
+│  ├─ package-lock.json
+│  └─ server.js
+├─ dist/
+│  ├─ assets/
+│  │  ├─ index-B952pT0J.css
+│  │  └─ index-iniigmfM.js
+│  └─ index.html
+├─ electron/
+│  ├─ cloud/
+│  │  └─ cloudClient.js
+│  ├─ database/
+│  │  └─ database.js
+│  ├─ db/
+│  │  └─ database.js
+│  ├─ ipc/
+│  │  └─ handlers.js
+│  ├─ nfc/
+│  │  └─ nfcService.js
+│  ├─ services/
+│  │  └─ authService.js
+│  ├─ main.js
+│  └─ preload.js
+├─ src/
+│  ├─ components/
+│  │  ├─ CopyBadge.jsx
+│  │  ├─ Home.jsx
+│  │  └─ Sidebar.jsx
+│  ├─ pages/
+│  │  ├─ CopyBadge.jsx
+│  │  ├─ Home.jsx
+│  │  ├─ Login.jsx
+│  │  └─ Sync.jsx
+│  ├─ App.jsx
+│  ├─ index.css
+│  ├─ index.html
+│  ├─ main.jsx
+│  ├─ propass-ui.bundle.js
+│  ├─ propass-ui.bundle.js.map
+│  ├─ renderer.js
+│  └─ styles.css
+├─ ui_src/
+│  ├─ components/
+│  │  ├─ LiveTerminal.jsx
+│  │  └─ Sidebar.jsx
+│  ├─ pages/
+│  │  ├─ Admin.jsx
+│  │  ├─ AdminDashboard.jsx
+│  │  ├─ ClientForm.jsx
+│  │  ├─ Clients.jsx
+│  │  ├─ CopyBadge.jsx
+│  │  ├─ Dump.jsx
+│  │  ├─ Home.jsx
+│  │  ├─ Login.jsx
+│  │  └─ Logs.jsx
+│  ├─ App.jsx
+│  ├─ AppLayout.jsx
+│  ├─ main.jsx
+│  └─ MainLayout.jsx
+├─ VAULT/
+│  ├─ dump_2026-02-21_16h38.bin
+│  └─ SOURCE_ZERO.bin
+├─ .env
+├─ .env.example
+├─ handlers.js
+├─ index.html
+├─ main.js
+├─ package.json
+├─ package-lock.json
+├─ preload.js
+├─ TREE.txt
+└─ vite.config.js
