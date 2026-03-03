@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Copy, Loader } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Loader, Copy } from 'lucide-react';
 
 function clamp01(x) {
   const n = Number(x);
@@ -21,7 +21,13 @@ function CopyBadge({ user }) {
   const [cardPresent, setCardPresent] = useState(false);
   const [copying, setCopying] = useState(false);
   const [result, setResult] = useState(null);
-  const [quota, setQuota] = useState({ remaining: 0, total: 15, used: 0 });
+  const [copyLogs, setCopyLogs] = useState([]);
+  const [quota, setQuota] = useState({ remaining: 14, total: 15 });
+
+  const copyingRef = useRef(false);
+  useEffect(() => {
+    copyingRef.current = !!copying;
+  }, [copying]);
 
   const [dumpState, setDumpState] = useState({
     ok: false,
@@ -35,19 +41,17 @@ function CopyBadge({ user }) {
     let poll = null;
 
     const initNfcRealtime = async () => {
-      // 1) Ensure JS NFC service is initialised for writeDump
-      // 2) Ensure Python presence watcher is started for reliable card detection
       let ok = false;
       try {
         const r = await window.api.nfc.init();
         if (!alive) return;
-        if (r?.success) ok = true;
+        if (r?.connected || r === true) ok = true;
       } catch (_) {}
 
       try {
         const w = await window.api.nfc.startPresenceWatch();
         if (!alive) return;
-        if (w?.success) ok = true;
+        if (w?.connected || w?.success) ok = ok || !!w?.connected;
       } catch (_) {}
 
       setReaderConnected(!!ok);
@@ -56,7 +60,6 @@ function CopyBadge({ user }) {
     initNfcRealtime();
     loadQuota();
 
-    // Preload dump status (sync vs offline vs none)
     (async () => {
       try {
         const r = await window.api.dumps.getActiveDump();
@@ -71,16 +74,14 @@ function CopyBadge({ user }) {
         } else {
           setDumpState({ ok: false, source: 'none', warning: null, lastSyncTs: Number(r?.lastSyncTs || 0) });
         }
-      } catch (_) {
-        // ignore
-      }
+      } catch (_) {}
     })();
 
     let unsubDumpUpdated = null;
     try {
       if (window.api?.dumps?.onDumpUpdated) {
         unsubDumpUpdated = window.api.dumps.onDumpUpdated((p) => {
-          const ts = Number(p && p.lastSyncTs || 0);
+          const ts = Number((p && p.lastSyncTs) || 0);
           setDumpState((prev) => ({ ...prev, lastSyncTs: ts || Date.now(), source: 'cloud', ok: true }));
         });
       }
@@ -90,66 +91,51 @@ function CopyBadge({ user }) {
     try {
       if (window.api?.cloud?.onQuotaUpdate) {
         unsubQuota = window.api.cloud.onQuotaUpdate((q) => {
-          const total = Math.max(1, Number(q?.monthly_limit ?? 15));
-          const remaining = Math.max(0, Number(q?.remaining ?? 0));
-          const used = Math.max(0, Number(q?.copies_this_month ?? (total - remaining)));
-          setQuota({ remaining, total, used });
+          setQuota({
+            remaining: Number(q?.remaining ?? 0),
+            total: Number(q?.monthly_limit ?? 15)
+          });
         });
       }
     } catch (_) {}
 
-    const unsubscribePresent = (() => {
-      try {
-        if (window.api?.nfc?.onCardPresent) {
-          return window.api.nfc.onCardPresent(() => {
-            setReaderConnected(true);
-            setCardPresent(true);
+    let unsubPyLog = null;
+    try {
+      if (window.api?.nfc?.onPyLog) {
+        unsubPyLog = window.api.nfc.onPyLog((line) => {
+          if (!copyingRef.current) return;
+          const s = String(line == null ? '' : line).replace(/\r/g, '').trimEnd();
+          if (!s) return;
+          if (s.startsWith('[watch]') || s.startsWith('[watch:')) return;
+          setCopyLogs((prev) => {
+            const next = prev.concat([s]);
+            return next.length > 220 ? next.slice(next.length - 220) : next;
           });
-        }
-      } catch (_) {}
-      return () => {};
-    })();
-
-    const unsubscribeRemoved = (() => {
-      try {
-        if (window.api?.nfc?.onCardRemoved) {
-          return window.api.nfc.onCardRemoved(() => {
-            setReaderConnected(true);
-            setCardPresent(false);
-          });
-        }
-      } catch (_) {}
-      return () => {};
-    })();
-
-    // Poll connection so hot-plug works and UI updates even without card events.
-    // IMPORTANT: do not lock the UI just because the JS NFCService isn't connected;
-    // the client flow relies on the Python watcher + Python writer.
-    poll = setInterval(async () => {
-      if (!alive) return;
-      try {
-        const connected = await window.api.nfc.isConnected();
-        if (!alive) return;
-        if (connected) {
-          setReaderConnected(true);
-          return;
-        }
-
-        // Try to (re)start watcher and (re)init JS service best-effort.
-        try {
-          const w = await window.api.nfc.startPresenceWatch();
-          if (!alive) return;
-          if (w?.success) setReaderConnected(true);
-        } catch (_) {}
-
-        try {
-          const r = await window.api.nfc.init();
-          if (!alive) return;
-          if (r?.success) setReaderConnected(true);
-        } catch (_) {}
-      } catch (_) {
-        // keep previous state
+        });
       }
+    } catch (_) {}
+
+    const unsubscribePresent = window.api.nfc.onCardPresent(() => {
+      setReaderConnected(true);
+      setCardPresent(true);
+    });
+
+    const unsubscribeRemoved = window.api.nfc.onCardRemoved(() => {
+      setCardPresent(false);
+    });
+
+    poll = setInterval(async () => {
+      try {
+        const state = await window.api.nfc.isConnected();
+        if (!alive) return;
+        const isReaderConnected = !!(state?.connected || state === true);
+        setReaderConnected(isReaderConnected);
+        if (isReaderConnected) {
+          try { await window.api.nfc.startPresenceWatch(); } catch (_) {}
+        } else {
+          setCardPresent(false);
+        }
+      } catch (_) {}
     }, 2500);
 
     return () => {
@@ -159,23 +145,24 @@ function CopyBadge({ user }) {
       unsubscribeRemoved();
       try { if (typeof unsubQuota === 'function') unsubQuota(); } catch (_) {}
       try { if (typeof unsubDumpUpdated === 'function') unsubDumpUpdated(); } catch (_) {}
+      try { if (typeof unsubPyLog === 'function') unsubPyLog(); } catch (_) {}
       try { window.api.nfc.stopPresenceWatch(); } catch (_) {}
     };
   }, []);
 
   const loadQuota = async () => {
     const q = await window.api.dumps.getQuota();
+    const remaining = Number(q?.remaining ?? 0);
     const total = Math.max(1, Number(q?.monthly_limit ?? 15));
-    const remaining = Math.max(0, Number(q?.remaining ?? 0));
-    const used = Math.max(0, Number(q?.copies_this_month ?? (total - remaining)));
-    setQuota({ remaining, total, used });
+    setQuota({ remaining, total });
   };
 
   const handleCopy = async () => {
     if (!cardPresent) return;
-    
+
     setCopying(true);
     setResult(null);
+    setCopyLogs([]);
 
     try {
       const online = await window.api.cloud.isOnline();
@@ -202,9 +189,8 @@ function CopyBadge({ user }) {
         lastSyncTs: Number(activeDump.lastSyncTs || 0)
       });
 
-      // Triggers backend/copy_process.py (spawn) and streams stdout to UI via nfc:copyLog.
       const writeRes = await window.api.nfc.writeDump(String(activeDump.data));
-      
+
       if (writeRes.success) {
         const dec = await window.api.dumps.writeAdminDump({ username: user && user.username ? user.username : 'client1' });
         if (!dec?.success) {
@@ -213,23 +199,18 @@ function CopyBadge({ user }) {
           setCopying(false);
           return;
         }
-        
-        setResult({ 
-          success: true, 
-          message: 'BADGE COPIER'
-        });
-        
+
+        setResult({ success: true, message: 'BADGE COPIER' });
         loadQuota();
       } else {
         setResult({ success: false, message: writeRes.message || writeRes.error || 'Échec écriture' });
         try { await window.api.dumps.logCopyFail(); } catch (_) {}
       }
-      
     } catch (e) {
       setResult({ success: false, message: `Erreur: ${e.message}` });
       try { await window.api.dumps.logCopyFail(); } catch (_) {}
     }
-    
+
     setCopying(false);
   };
 
@@ -245,42 +226,30 @@ function CopyBadge({ user }) {
           </div>
 
           <div className="client-sync-sub">
-            {dumpState.lastSyncTs ? (
-              `Dernière synchro: ${new Date(dumpState.lastSyncTs).toLocaleDateString('fr-FR')} à ${new Date(dumpState.lastSyncTs).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
-            ) : (
-              'Dernière synchro: —'
-            )}
+            {dumpState.lastSyncTs
+              ? `Dernière synchro: ${new Date(dumpState.lastSyncTs).toLocaleDateString('fr-FR')} à ${new Date(dumpState.lastSyncTs).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}`
+              : 'Dernière synchro: —'}
           </div>
 
-          {dumpState.warning ? (
-            <div className="client-sync-warning">{dumpState.warning}</div>
-          ) : null}
+          {dumpState.warning ? <div className="client-sync-warning">{dumpState.warning}</div> : null}
 
           <div className={`client-step-box ${readerConnected ? 'done' : ''}`}>
             <div className="client-step-title">1. BRANCHER LECTEUR</div>
-            <div className="client-step-sub">
-              {readerConnected ? 'Lecteur connecté' : 'En attente de connexion…'}
-            </div>
+            <div className="client-step-sub">{readerConnected ? 'Lecteur connecté' : 'En attente de connexion…'}</div>
           </div>
 
           <div className={`client-step-box ${cardPresent ? 'done' : ''}`}>
             <div className="client-step-title">2. POSER LE BADGE</div>
-            <div className="client-step-sub">
-              {cardPresent ? 'Badge détecté' : (readerConnected ? 'En attente du badge…' : 'Branchez d\'abord le lecteur')}
-            </div>
+            <div className="client-step-sub">{cardPresent ? 'Badge détecté' : (readerConnected ? 'En attente du badge…' : 'Branchez d\'abord le lecteur')}</div>
           </div>
 
           <div className="client-step-box">
             <div className="client-step-title">3. SYNCHRONISER</div>
-            <button
-              className="client-copy-btn"
-              onClick={handleCopy}
-              disabled={!dumpState.ok || !cardPresent || copying || quota.remaining <= 0}
-            >
+            <button className="client-copy-btn" onClick={handleCopy} disabled={!dumpState.ok || !cardPresent || copying || quota.remaining <= 0}>
               {copying ? (
                 <>
                   <Loader className="spin" size={16} />
-                  COPIE…
+                  SYNCHRO…
                 </>
               ) : (
                 <>
@@ -297,6 +266,8 @@ function CopyBadge({ user }) {
               {result.success ? result.message : `✗ ${result.message}`}
             </div>
           ) : null}
+
+          {null}
         </aside>
 
         <section className="client-copy-center">
@@ -319,7 +290,7 @@ function CopyBadge({ user }) {
             <div className="client-quota-stats">
               <div className="client-quota-row">
                 <span>Copies utilisées</span>
-                <span>{quota.used}</span>
+                <span>{Math.max(0, quota.total - quota.remaining)}</span>
               </div>
               <div className="client-quota-row">
                 <span>Quota total</span>
@@ -330,10 +301,7 @@ function CopyBadge({ user }) {
                 <span>{quota.remaining}</span>
               </div>
               <div className="client-quota-bar">
-                <div
-                  className="client-quota-bar-fill"
-                  style={{ width: `${Math.round(100 * clamp01(quota.total ? quota.remaining / quota.total : 0))}%` }}
-                />
+                <div className="client-quota-bar-fill" style={{ width: `${Math.round(100 * clamp01(quota.total ? quota.remaining / quota.total : 0))}%` }} />
               </div>
             </div>
           </div>
@@ -341,12 +309,12 @@ function CopyBadge({ user }) {
           <div className="client-cards-row">
             <div className="client-card">
               <div className="client-card-icon">📄</div>
-              <div className="client-card-value">{quota.used}</div>
+              <div className="client-card-value">{Math.max(0, quota.total - quota.remaining)}</div>
               <div className="client-card-label">Copies ce mois</div>
             </div>
             <div className="client-card">
               <div className="client-card-icon">📃</div>
-              <div className="client-card-value">{quota.used}</div>
+              <div className="client-card-value">{Math.max(0, quota.total - quota.remaining)}</div>
               <div className="client-card-label">Total copies</div>
             </div>
             <div className="client-card">

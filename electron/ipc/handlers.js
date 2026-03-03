@@ -1,928 +1,926 @@
-const fs = require('fs');
+const { app, dialog, BrowserWindow } = require('electron');
+const { spawn } = require('child_process');
 const path = require('path');
-const crypto = require('crypto');
-const { exec, spawn } = require('child_process');
-const { BrowserWindow } = require('electron');
-const { shell } = require('electron');
-const { app } = require('electron');
-const { dialog } = require('electron');
-const {
-  getDatabasePath,
-  getClients,
-  getClientById,
-  getClientByUsername,
-  updateClientQuotaAndValidity,
-  decrementQuotaByUsername,
-  insertMasterDump,
-  getLatestMasterDumpForClient
-  ,authenticateUser
-  ,getClientForUser
-} = require('../db/database');
-
+const os = require('os');
+const fs = require('fs');
 const { CloudClient } = require('../cloud/cloudClient');
 
-const cloud = new CloudClient();
+const DUMP_DIR = path.join(os.tmpdir(), 'propass_dumps');
+const VAULT_FILE = path.join(DUMP_DIR, 'SOURCE_ZERO.bin');
+const LOCAL_LOGS_FILE = path.join(DUMP_DIR, 'local_admin_logs.json');
 
-function broadcastToAllWindows(channel, payload) {
-  BrowserWindow.getAllWindows().forEach((w) => {
-    try { w.webContents.send(channel, payload); } catch (_) {}
+if (!fs.existsSync(DUMP_DIR)) {
+  fs.mkdirSync(DUMP_DIR, { recursive: true });
+}
+
+const cloud = new CloudClient({ baseUrl: process.env.PROPASS_CLOUD_URL });
+let authSessionUser = null;
+let registered = false;
+const adminLogs = [];
+let nfcReaderConnected = false;
+let nfcCardPresent = false;
+let nfcCardUid = null;
+let presenceWatcherChild = null;
+let presenceWatcherBuf = '';
+let dumpCliModeCache = null;
+
+function getDumpScriptPath() {
+  const prodPath = path.join(process.resourcesPath || '', 'backend', 'nfc', 'dump.py');
+  const devPath = path.join(__dirname, '..', '..', 'backend', 'nfc', 'dump.py');
+  if (!app.isPackaged && fs.existsSync(devPath)) return devPath;
+  if (fs.existsSync(prodPath)) return prodPath;
+  return devPath;
+}
+
+function getWriteScriptPath() {
+  const prodPath = path.join(process.resourcesPath || '', 'backend', 'nfc', 'write.py');
+  const devPath = path.join(__dirname, '..', '..', 'backend', 'nfc', 'write.py');
+  if (!app.isPackaged && fs.existsSync(devPath)) return devPath;
+  if (fs.existsSync(prodPath)) return prodPath;
+  return devPath;
+}
+
+function getPresenceWatchScriptPath() {
+  const prodPath = path.join(process.resourcesPath || '', 'backend', 'nfc', 'presence_watch.py');
+  const devPath = path.join(__dirname, '..', '..', 'backend', 'nfc', 'presence_watch.py');
+  if (!app.isPackaged && fs.existsSync(devPath)) return devPath;
+  if (fs.existsSync(prodPath)) return prodPath;
+  return devPath;
+}
+
+function getDumpCliMode() {
+  if (dumpCliModeCache) return dumpCliModeCache;
+  const scriptPath = getDumpScriptPath();
+  try {
+    const txt = fs.readFileSync(scriptPath, 'utf8');
+    if (txt.includes('--from-vault') || txt.includes('argparse.ArgumentParser')) {
+      dumpCliModeCache = 'argparse';
+      return dumpCliModeCache;
+    }
+  } catch (_) {}
+  dumpCliModeCache = 'legacy';
+  return dumpCliModeCache;
+}
+
+function probeReaderConnection() {
+  return new Promise((resolve) => {
+    const pythonBin = process.platform === 'win32' ? 'python' : 'python3';
+    const detectScript = `
+import sys
+try:
+    from smartcard.System import readers
+    r = readers()
+    if r:
+        print("READER_OK:" + str(r[0]), flush=True)
+        sys.exit(0)
+    else:
+        print("NO_READER", flush=True)
+        sys.exit(1)
+except Exception as e:
+    print("ERROR:" + str(e), flush=True)
+    sys.exit(2)
+`;
+
+    const child = spawn(pythonBin, ['-c', detectScript]);
+    let output = '';
+    child.stdout.on('data', (d) => { output += d.toString(); });
+    child.stderr.on('data', (d) => { output += d.toString(); });
+    child.on('close', (code) => {
+      const connected = code === 0 && output.includes('READER_OK');
+      const readerName = connected ? (output.split('READER_OK:')[1] || '').trim() || 'Lecteur PCSC' : null;
+      resolve({ connected, readerName, raw: output.trim() });
+    });
+    child.on('error', () => resolve({ connected: false, readerName: null, raw: 'python_not_found' }));
   });
 }
 
-function emitNfcPyLog(line) {
-  const msg = String(line == null ? '' : line);
-  broadcastToAllWindows('nfc:pyLog', msg);
+function runDumpScript(action, target, sender) {
+  const scriptPath = getDumpScriptPath();
+  const writePath = getWriteScriptPath();
+  const pythonBin = process.platform === 'win32' ? 'python' : 'python3';
+
+  const spawnAndStream = (script, args, envExtra = {}) => new Promise((resolve, reject) => {
+    if (!fs.existsSync(script)) {
+      reject(new Error(`SCRIPT_NOT_FOUND: ${script}`));
+      return;
+    }
+
+    let stderrAll = '';
+    const child = spawn(pythonBin, [script, ...args], {
+      env: { ...process.env, PYTHONUNBUFFERED: '1', ...envExtra }
+    });
+
+    child.stdout.on('data', (chunk) => {
+      const line = String(chunk || '').trim();
+      if (line && sender && !sender.isDestroyed()) {
+        sender.send('nfc:log', line);
+        sender.send('nfc:pyLog', line);
+      }
+      if (line) console.log(`[py][stdout] ${line}`);
+    });
+
+    child.stderr.on('data', (chunk) => {
+      const line = String(chunk || '').trim();
+      stderrAll += `${line}\n`;
+      if (line && sender && !sender.isDestroyed()) {
+        sender.send('nfc:log', `ERR: ${line}`);
+        sender.send('nfc:pyLog', `ERR: ${line}`);
+      }
+      if (line) console.error(`[py][stderr] ${line}`);
+    });
+
+    child.on('close', (code) => {
+      if (code === 0) resolve({ ok: true, code: 0, stderr: stderrAll });
+      else resolve({ ok: false, code: Number(code || 1), stderr: stderrAll });
+    });
+
+    child.on('error', (err) => reject(new Error(`SPAWN_ERROR: ${err.message}`)));
+  });
+
+  return (async () => {
+    const cliMode = getDumpCliMode();
+
+    if (action === 'read') {
+      if (cliMode === 'argparse') {
+        const r = await spawnAndStream(scriptPath, ['--out', target]);
+        if (r.ok) return;
+        throw new Error(`DUMP_SCRIPT_FAILED: exit code ${r.code}`);
+      }
+
+      const r1 = await spawnAndStream(scriptPath, ['read', target]);
+      if (r1.ok) return;
+
+      const needsArgStyle = /unrecognized arguments|usage:\s*dump\.py/i.test(String(r1.stderr || ''));
+      if (needsArgStyle) {
+        const r2 = await spawnAndStream(scriptPath, ['--out', target]);
+        if (r2.ok) return;
+        throw new Error(`DUMP_SCRIPT_FAILED: exit code ${r2.code}`);
+      }
+      throw new Error(`DUMP_SCRIPT_FAILED: exit code ${r1.code}`);
+    }
+
+    if (action === 'write') {
+      if (cliMode === 'argparse') {
+        const r = await spawnAndStream(writePath, [], { PROPASS_SOURCE_PATH: target });
+        if (r.ok) return;
+        throw new Error(`WRITE_SCRIPT_FAILED: exit code ${r.code}`);
+      }
+
+      const r1 = await spawnAndStream(scriptPath, ['write', target]);
+      if (r1.ok) return;
+
+      const needsWriteFallback = /unrecognized arguments|usage:\s*dump\.py/i.test(String(r1.stderr || ''));
+      if (needsWriteFallback) {
+        const r2 = await spawnAndStream(writePath, [], { PROPASS_SOURCE_PATH: target });
+        if (r2.ok) return;
+        throw new Error(`WRITE_SCRIPT_FAILED: exit code ${r2.code}`);
+      }
+      throw new Error(`DUMP_SCRIPT_FAILED: exit code ${r1.code}`);
+    }
+
+    throw new Error(`UNSUPPORTED_ACTION: ${String(action)}`);
+  })();
 }
 
-let presenceWatcher = null; // ChildProcess
-let presenceWatcherBuf = '';
+function getAllWindows() {
+  try {
+    return BrowserWindow.getAllWindows() || [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function broadcast(channel, payload) {
+  const wins = getAllWindows();
+  for (const w of wins) {
+    try {
+      if (w && w.webContents && !w.webContents.isDestroyed()) {
+        w.webContents.send(channel, payload);
+      }
+    } catch (_) {}
+  }
+}
+
+function nowFr() {
+  return new Date().toLocaleString('fr-FR');
+}
+
+function emitAdminLog(line) {
+  const msg = `[${nowFr()}] ${String(line || '')}`;
+  adminLogs.push(msg);
+  if (adminLogs.length > 500) adminLogs.splice(0, adminLogs.length - 500);
+  broadcast('admin:log', msg);
+}
+
+function readLocalLogs() {
+  try {
+    if (!fs.existsSync(LOCAL_LOGS_FILE)) return [];
+    const raw = fs.readFileSync(LOCAL_LOGS_FILE, 'utf8');
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function writeLocalLogs(rows) {
+  try {
+    fs.writeFileSync(LOCAL_LOGS_FILE, JSON.stringify(Array.isArray(rows) ? rows : [], null, 2), 'utf8');
+  } catch (_) {}
+}
+
+function appendLocalLog(action, companyName) {
+  const rows = readLocalLogs();
+  rows.unshift({
+    id: `L${Date.now()}${Math.floor(Math.random() * 1000)}`,
+    ts: Date.now(),
+    action: String(action || '—'),
+    company_name: String(companyName || '—')
+  });
+  writeLocalLogs(rows.slice(0, 3000));
+}
+
+function filterLocalLogs(filters = {}) {
+  const actionFilter = String(filters.action || '').trim();
+  const societeFilter = String(filters.societe || '').trim().toLowerCase();
+  const start = filters.dateDebut ? new Date(`${filters.dateDebut}T00:00:00`).getTime() : null;
+  const end = filters.dateFin ? new Date(`${filters.dateFin}T23:59:59`).getTime() : null;
+
+  return readLocalLogs().filter((r) => {
+    const ts = Number(r.ts || 0);
+    if (start != null && ts < start) return false;
+    if (end != null && ts > end) return false;
+    if (actionFilter && actionFilter !== 'Tous' && String(r.action || '') !== actionFilter) return false;
+    if (societeFilter && !String(r.company_name || '').toLowerCase().includes(societeFilter)) return false;
+    return true;
+  });
+}
+
+async function buildMergedLogs(filters = {}) {
+  const localRows = filterLocalLogs(filters);
+
+  let cloudRows = [];
+  let cloudTotal = 0;
+  try {
+    const r = await cloud.adminGetLogs({ ...filters, page: 1, limit: 1000 });
+    cloudRows = Array.isArray(r.rows) ? r.rows : [];
+    cloudTotal = Number(r.total || cloudRows.length || 0);
+  } catch (_) {
+    cloudRows = [];
+    cloudTotal = 0;
+  }
+
+  const all = [...cloudRows, ...localRows]
+    .sort((a, b) => Number(b.ts || 0) - Number(a.ts || 0));
+
+  const page = Math.max(1, Number(filters.page || 1));
+  const limit = Math.max(1, Math.min(5000, Number(filters.limit || 10)));
+  const total = Math.max(cloudTotal, all.length);
+  const pageCount = Math.max(1, Math.ceil(total / limit));
+  const startIdx = (page - 1) * limit;
+  const rows = all.slice(startIdx, startIdx + limit);
+
+  return { rows, total, pageCount, page, limit };
+}
+
+function resolveCompanyNameFromUser(u) {
+  if (!u) return '—';
+  return String(u.company_name || u.company || u.username || u.email || '—');
+}
+
+function expandDump768To1024(buf768) {
+  const src = Buffer.isBuffer(buf768) ? buf768 : Buffer.from(buf768 || []);
+  if (src.length !== 768) throw new Error('INVALID_768_DUMP');
+  const out = Buffer.alloc(1024, 0x00);
+  for (let sector = 0; sector < 16; sector++) {
+    const srcOffset = sector * 48;
+    const dstOffset = sector * 64;
+    src.copy(out, dstOffset, srcOffset, srcOffset + 48);
+  }
+  return out;
+}
+
+function compressDump1024To768(buf1024) {
+  const src = Buffer.isBuffer(buf1024) ? buf1024 : Buffer.from(buf1024 || []);
+  if (src.length !== 1024) throw new Error('INVALID_1024_DUMP');
+  const out = Buffer.alloc(768);
+  for (let sector = 0; sector < 16; sector++) {
+    const srcOffset = sector * 64;
+    const dstOffset = sector * 48;
+    src.copy(out, dstOffset, srcOffset, srcOffset + 48);
+  }
+  return out;
+}
+
+function normalizeDumpForCloudHex(buf) {
+  const src = Buffer.isBuffer(buf) ? buf : Buffer.from(buf || []);
+  if (src.length === 1024) return src.toString('hex');
+  if (src.length === 768) return expandDump768To1024(src).toString('hex');
+  if (src.length > 1024) return src.subarray(0, 1024).toString('hex');
+  throw new Error(`UNSUPPORTED_DUMP_SIZE:${src.length}`);
+}
+
+function writeVaultForWriterFromHex(dumpHex) {
+  const h = String(dumpHex || '').replace(/[^0-9a-fA-F]/g, '').toLowerCase();
+  if (!h || (h.length % 2) !== 0) throw new Error('DUMP_HEX_INVALID');
+  const raw = Buffer.from(h, 'hex');
+  if (raw.length === 768) {
+    fs.writeFileSync(VAULT_FILE, raw);
+    return 768;
+  }
+  if (raw.length >= 1024) {
+    const w = compressDump1024To768(raw.subarray(0, 1024));
+    fs.writeFileSync(VAULT_FILE, w);
+    return 768;
+  }
+  throw new Error(`DUMP_SIZE_INVALID:${raw.length}`);
+}
+
+function emitNfcLog(line) {
+  const msg = String(line == null ? '' : line).trim();
+  if (!msg) return;
+  broadcast('nfc:log', msg);
+  broadcast('nfc:pyLog', msg);
+}
+
+function emitCardPresent(uid) {
+  const v = uid == null ? null : String(uid);
+  nfcCardPresent = true;
+  nfcCardUid = v;
+  broadcast('nfc:cardPresent', v);
+}
+
+function emitCardRemoved() {
+  nfcCardPresent = false;
+  nfcCardUid = null;
+  broadcast('nfc:cardRemoved');
+}
 
 function stopPresenceWatcher() {
-  if (!presenceWatcher) return;
-  try { presenceWatcher.kill('SIGKILL'); } catch (_) {}
-  presenceWatcher = null;
+  try {
+    if (presenceWatcherChild && !presenceWatcherChild.killed) {
+      presenceWatcherChild.kill();
+    }
+  } catch (_) {}
+  presenceWatcherChild = null;
   presenceWatcherBuf = '';
 }
 
 function startPresenceWatcher() {
-  if (presenceWatcher && !presenceWatcher.killed) {
-    return { success: true, running: true };
-  }
-
-  const scriptPath = resolveResourcePath('backend', 'nfc', 'presence_watch.py');
-  const pyExe = 'python';
-  const child = spawn(pyExe, [scriptPath], {
-    env: { ...process.env },
-    windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-
-  presenceWatcher = child;
-  presenceWatcherBuf = '';
-
-  const onLine = (line) => {
-    const txt = String(line || '').trim();
-    if (!txt) return;
-    if (!txt.startsWith('{')) {
-      emitNfcPyLog(`[watch] ${txt}`);
+  return new Promise((resolve) => {
+    if (presenceWatcherChild && !presenceWatcherChild.killed) {
+      resolve({ success: true, watching: true, connected: nfcReaderConnected });
       return;
     }
-    try {
-      const msg = JSON.parse(txt);
-      if (msg && msg.type === 'present') {
-        broadcastToAllWindows('nfc:cardPresent', msg.uid || null);
-        return;
-      }
-      if (msg && msg.type === 'removed') {
-        broadcastToAllWindows('nfc:cardRemoved');
-        return;
-      }
-      if (msg && msg.type === 'error') {
-        emitNfcPyLog(`[watch:error] ${String(msg.error || 'ERROR')}`);
-        return;
-      }
-    } catch (_) {
-      emitNfcPyLog(`[watch] ${txt}`);
+
+    const scriptPath = getPresenceWatchScriptPath();
+    if (!fs.existsSync(scriptPath)) {
+      resolve({ success: false, error: `SCRIPT_NOT_FOUND: ${scriptPath}` });
+      return;
     }
-  };
 
-  try {
-    child.stdout.on('data', (d) => {
-      presenceWatcherBuf += String(d || '');
-      const parts = presenceWatcherBuf.split(/\r?\n/);
-      presenceWatcherBuf = parts.pop() || '';
-      for (const p of parts) onLine(p);
-    });
-    child.stderr.on('data', (d) => emitNfcPyLog(`[watch:stderr] ${String(d || '')}`));
-  } catch (_) {}
+    const pythonBin = process.platform === 'win32' ? 'python' : 'python3';
+    let resolved = false;
 
-  child.on('exit', () => {
-    presenceWatcher = null;
-    presenceWatcherBuf = '';
-  });
-
-  child.on('error', (e) => {
-    emitNfcPyLog(`[watch:error] ${String(e && e.message || e)}`);
-    stopPresenceWatcher();
-  });
-
-  return { success: true, running: true };
-}
-
-cloud.on('quota:update', (q) => {
-  broadcastToAllWindows('cloud:quotaUpdate', q);
-});
-
-function resolveResourcePath(...parts) {
-  const candidates = [];
-  if (process && process.resourcesPath) candidates.push(path.join(process.resourcesPath, ...parts));
-  candidates.push(path.join(__dirname, '..', '..', ...parts));
-  for (const candidate of candidates) {
     try {
-      if (candidate && fs.existsSync(candidate)) return candidate;
-
-      // If sources are excluded from packaging, prefer compiled Python bytecode.
-      // This allows calls that reference "*.py" to work with shipped "*.pyc".
-      if (candidate && candidate.toLowerCase().endsWith('.py')) {
-        const pyc = candidate + 'c'; // .py -> .pyc
-        if (fs.existsSync(pyc)) return pyc;
-      }
-    } catch (_) {
-      // ignore
+      presenceWatcherChild = spawn(pythonBin, [scriptPath], {
+        env: { ...process.env, PYTHONUNBUFFERED: '1' }
+      });
+      presenceWatcherBuf = '';
+    } catch (e) {
+      resolve({ success: false, error: String(e && e.message || e) });
+      return;
     }
-  }
-  return path.join(__dirname, '..', '..', ...parts);
-}
-
-function getVaultDir() {
-  return path.join(__dirname, '..', '..', 'VAULT');
-}
-
-function getUserVaultDir() {
-  const base = app.getPath('userData');
-  return path.join(base, 'VAULT');
-}
-
-function ensureDir(p) {
-  try {
-    if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
-  } catch (_) {}
-}
-
-function getUserVaultDumpPath() {
-  const dir = getUserVaultDir();
-  ensureDir(dir);
-  return path.join(dir, 'SOURCE_ZERO.bin');
-}
-
-function getUserVaultMetaPath() {
-  const dir = getUserVaultDir();
-  ensureDir(dir);
-  return path.join(dir, 'SOURCE_ZERO.meta.json');
-}
-
-function sha256Hex(buf) {
-  return crypto.createHash('sha256').update(buf).digest('hex');
-}
-
-function readDumpMeta() {
-  try {
-    const p = getUserVaultMetaPath();
-    if (!fs.existsSync(p)) return null;
-    const raw = fs.readFileSync(p, 'utf8');
-    return raw ? JSON.parse(raw) : null;
-  } catch (_) {
-    return null;
-  }
-}
-
-function writeDumpMeta(meta) {
-  try {
-    const p = getUserVaultMetaPath();
-    fs.writeFileSync(p, JSON.stringify(meta || {}, null, 2), 'utf8');
-  } catch (_) {}
-}
-
-async function fetchActiveDumpBinary({ clientId, ifNoneMatch } = {}) {
-  if (!cloud || !cloud.baseUrl) throw new Error('CLOUD_NOT_READY');
-  if (!cloud.token) throw new Error('not_authenticated');
-
-  const url = `${String(cloud.baseUrl).replace(/\/+$/, '')}/api/client/dump/active`;
-  const headers = {
-    Authorization: `Bearer ${cloud.token}`
-  };
-  if (clientId != null) headers['client-id'] = String(clientId);
-  if (ifNoneMatch) headers['If-None-Match'] = String(ifNoneMatch);
-
-  const res = await fetch(url, { method: 'GET', headers });
-  if (res.status === 304) {
-    return { ok: true, notModified: true, status: 304, hash: String(res.headers.get('etag') || ifNoneMatch || '') };
-  }
-  if (!res.ok) {
-    const txt = await res.text().catch(() => '');
-    const err = new Error(`HTTP_${res.status}`);
-    err.status = res.status;
-    err.body = txt;
-    throw err;
-  }
-
-  const ab = await res.arrayBuffer();
-  const bytes = Buffer.from(ab);
-  const hash = String(res.headers.get('x-dump-hash') || res.headers.get('etag') || sha256Hex(bytes));
-  const updatedAt = String(res.headers.get('x-dump-updated-at') || '');
-  return { ok: true, notModified: false, status: res.status, bytes, hash, updatedAt };
-}
-
-let dumpSyncTimer = null;
-
-async function forceDumpRefresh({ clientId } = {}) {
-  const localMeta = readDumpMeta();
-  const localHash = localMeta && localMeta.hash ? String(localMeta.hash) : null;
-  const r = await fetchActiveDumpBinary({ clientId, ifNoneMatch: localHash });
-  if (r && r.ok && r.notModified) {
-    return { updated: false, hash: localHash, lastSyncTs: Number(localMeta && localMeta.lastSyncTs || 0) || Date.now() };
-  }
-
-  const dumpPath = getUserVaultDumpPath();
-  ensureDir(path.dirname(dumpPath));
-  fs.writeFileSync(dumpPath, r.bytes);
-
-  const meta = {
-    hash: r.hash || sha256Hex(r.bytes),
-    lastSyncTs: Date.now(),
-    cloudUpdatedAt: r.updatedAt || null,
-    source: 'cloud'
-  };
-  writeDumpMeta(meta);
-  broadcastToAllWindows('dump:updated', { hash: meta.hash, lastSyncTs: meta.lastSyncTs });
-  return { updated: true, hash: meta.hash, lastSyncTs: meta.lastSyncTs };
-}
-
-function startDumpSyncLoop({ clientId } = {}) {
-  try {
-    if (dumpSyncTimer) clearInterval(dumpSyncTimer);
-  } catch (_) {}
-  dumpSyncTimer = null;
-
-  // Force refresh from cloud once per app/session start (spec)
-  forceDumpRefresh({ clientId }).catch(() => {});
-
-  dumpSyncTimer = setInterval(() => {
-    forceDumpRefresh({ clientId }).catch(() => {});
-  }, 5 * 60 * 1000);
-}
-
-function stopDumpSyncLoop() {
-  try {
-    if (dumpSyncTimer) clearInterval(dumpSyncTimer);
-  } catch (_) {}
-  dumpSyncTimer = null;
-}
-
-function bufferToHex(buf) {
-  if (!buf) return '';
-  return Buffer.isBuffer(buf) ? buf.toString('hex') : Buffer.from(buf).toString('hex');
-}
-
-function extractHexFromText(text) {
-  const cleaned = String(text || '').replace(/[^0-9a-fA-F]/g, '').toLowerCase();
-  if (cleaned.length >= 2048) return cleaned.slice(0, 2048);
-  return null;
-}
-
-function formatVaultStamp(d = new Date()) {
-  const pad2 = (n) => String(n).padStart(2, '0');
-  const yyyy = d.getFullYear();
-  const mm = pad2(d.getMonth() + 1);
-  const dd = pad2(d.getDate());
-  const hh = pad2(d.getHours());
-  const min = pad2(d.getMinutes());
-  return `${yyyy}-${mm}-${dd}_${hh}h${min}`;
-}
-
-function saveVaultSnapshot({ vaultDir, bytes }) {
-  const stamp = formatVaultStamp(new Date());
-  const fileName = `dump_${stamp}.bin`;
-  const snapPath = path.join(vaultDir, fileName);
-  fs.writeFileSync(snapPath, bytes);
-  return snapPath;
-}
-
-async function runPythonDump() {
-  const vaultDir = getVaultDir();
-  try { if (!fs.existsSync(vaultDir)) fs.mkdirSync(vaultDir, { recursive: true }); } catch (_) {}
-  const outPath = path.join(vaultDir, 'SOURCE_ZERO.bin');
-
-  const scriptPath = resolveResourcePath('backend', 'nfc', 'dump.py');
-  const env = {
-    ...process.env,
-    PROPASS_VAULT_DIR: vaultDir,
-    PROPASS_OUT_PATH: outPath
-  };
-
-  // BRUTE execution as requested: exec("python …")
-  const pyExe = 'python';
-  const command = `${pyExe} "${scriptPath}" --vault "${vaultDir}" --out "${outPath}" --stdout`;
-
-  emitNfcPyLog(`[exec] ${command}`);
-
-  const result = await new Promise((resolve) => {
-    const child = exec(command, {
-      env,
-      windowsHide: true,
-      timeout: 10000,
-      killSignal: 'SIGKILL',
-      maxBuffer: 15 * 1024 * 1024
-    }, (error, stdout, stderr) => {
-      resolve({ error, stdout: String(stdout || ''), stderr: String(stderr || ''), outPath });
-    });
-
-    try {
-      if (child && child.stdout) {
-        child.stdout.on('data', (d) => emitNfcPyLog(String(d || '')));
-      }
-      if (child && child.stderr) {
-        child.stderr.on('data', (d) => emitNfcPyLog(String(d || '')));
-      }
-    } catch (_) {}
-  });
-
-  if (result && result.error) {
-    const err = result.error;
-    const isTimeout = !!(err && (err.killed || String(err.signal || '').toUpperCase().includes('SIG')) && String(err.message || '').toLowerCase().includes('timed'));
-    if (isTimeout) {
-      emitNfcPyLog('[timeout] Python dump killed after 10s');
-      return { success: false, error: 'CARD_TIMEOUT' };
-    }
-    if (err && err.code === 'ENOENT') {
-      emitNfcPyLog('[error] python not found');
-      return { success: false, error: 'PYTHON_NOT_FOUND' };
-    }
-  }
-
-  const stdout = (result && result.stdout) || '';
-
-  // Prefer JSON if provided
-  const txt = String(stdout || '').trim();
-  if (txt.startsWith('{')) {
-    try {
-      const j = JSON.parse(txt);
-      if (j && j.success && j.dump_hex) {
-        const dumpHex = String(j.dump_hex);
-        // Ensure VAULT/SOURCE_ZERO.bin exists
-        try {
-          if (!fs.existsSync(outPath)) {
-            fs.writeFileSync(outPath, Buffer.from(dumpHex, 'hex'));
-          }
-        } catch (_) {}
-
-        // Timestamped snapshot in VAULT
-        let snapshotPath = null;
-        try {
-          const bytes = fs.readFileSync(outPath);
-          snapshotPath = saveVaultSnapshot({ vaultDir, bytes });
-          emitNfcPyLog(`[vault] snapshot saved: ${snapshotPath}`);
-        } catch (_) {}
-
-        try { shell.beep(); } catch (_) {}
-        return { success: true, uid: j.uid || null, dumpHex, snapshotPath };
-      }
-      if (j && j.success) {
-        if (fs.existsSync(outPath)) {
-          const buf = fs.readFileSync(outPath);
-          const dumpHex = bufferToHex(buf);
-          if (dumpHex && dumpHex.length >= 2048) {
-            let snapshotPath = null;
-            try {
-              snapshotPath = saveVaultSnapshot({ vaultDir, bytes: buf });
-              emitNfcPyLog(`[vault] snapshot saved: ${snapshotPath}`);
-            } catch (_) {}
-            try { shell.beep(); } catch (_) {}
-            return { success: true, uid: j.uid || null, dumpHex: dumpHex.slice(0, 2048), snapshotPath };
-          }
-        }
-      }
-      if (j && j.error) return { success: false, error: String(j.error) };
-    } catch (_) {}
-  }
-
-  // Otherwise try to parse HEX from stdout
-  const hex = extractHexFromText(stdout);
-  if (hex) {
-    try {
-      fs.writeFileSync(outPath, Buffer.from(hex, 'hex'));
-    } catch (_) {}
-    let snapshotPath = null;
-    try {
-      const bytes = fs.readFileSync(outPath);
-      snapshotPath = saveVaultSnapshot({ vaultDir, bytes });
-      emitNfcPyLog(`[vault] snapshot saved: ${snapshotPath}`);
-    } catch (_) {}
-    try { shell.beep(); } catch (_) {}
-    return { success: true, uid: null, dumpHex: hex, snapshotPath };
-  }
-
-  // Or read the VAULT file
-  try {
-    if (fs.existsSync(outPath)) {
-      const buf = fs.readFileSync(outPath);
-      const dumpHex = bufferToHex(buf);
-      if (dumpHex && dumpHex.length >= 2048) {
-        let snapshotPath = null;
-        try {
-          snapshotPath = saveVaultSnapshot({ vaultDir, bytes: buf });
-          emitNfcPyLog(`[vault] snapshot saved: ${snapshotPath}`);
-        } catch (_) {}
-        try { shell.beep(); } catch (_) {}
-        return { success: true, uid: null, dumpHex: dumpHex.slice(0, 2048), snapshotPath };
-      }
-    }
-  } catch (_) {}
-
-  return { success: false, error: 'NO_READER' };
-}
-
-async function runPythonWriteFromVault() {
-  const vaultDir = getUserVaultDir();
-  ensureDir(vaultDir);
-  const sourcePath = path.join(vaultDir, 'SOURCE_ZERO.bin');
-  if (!fs.existsSync(sourcePath)) {
-    return { success: false, error: 'NO_DUMP', path: sourcePath };
-  }
-  try {
-    const st = fs.statSync(sourcePath);
-    if (!st || st.size < 1024) return { success: false, error: 'DUMP_TOO_SMALL', size: st ? st.size : 0 };
-  } catch (_) {}
-
-  // MUST execute this script for the client copy flow (real, verifiable).
-  const scriptPath = resolveResourcePath('backend', 'copy_process.py');
-  const env = {
-    ...process.env,
-    PROPASS_VAULT_DIR: vaultDir,
-    PROPASS_SOURCE_PATH: sourcePath
-  };
-
-  const pyExe = 'python';
-  emitNfcPyLog(`[spawn] ${pyExe} "${scriptPath}"`);
-
-  const result = await new Promise((resolve) => {
-    let stdoutAll = '';
-    let stderrAll = '';
-    let stdoutBuf = '';
-    let stderrBuf = '';
-    let settled = false;
-    let stopRequested = false;
-
-    const child = spawn(pyExe, [scriptPath], {
-      env,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
 
     const finish = (payload) => {
-      if (settled) return;
-      settled = true;
+      if (resolved) return;
+      resolved = true;
       resolve(payload);
     };
 
-    const maybeStopOnFailure = (line) => {
-      if (stopRequested) return;
-      if (!line) return;
-      if (/\bECHEC\b/i.test(line)) {
-        stopRequested = true;
-        try { emitNfcPyLog('ECHEC: ARRET IMMEDIAT'); } catch (_) {}
-        try { child.kill('SIGKILL'); } catch (_) {}
+    const handleLine = (line) => {
+      const s = String(line || '').trim();
+      if (!s) return;
+
+      let obj = null;
+      try { obj = JSON.parse(s); } catch (_) { obj = null; }
+      if (!obj || typeof obj !== 'object') {
+        emitNfcLog(s);
+        return;
       }
-    };
 
-    const flushLines = (buf) => {
-      const parts = buf.split(/\r?\n/);
-      const rest = parts.pop() || '';
-      for (const p of parts) {
-        const line = String(p || '').trimEnd();
-        if (!line) continue;
-        emitNfcPyLog(line);
-        maybeStopOnFailure(line);
+      const t = String(obj.type || '').toLowerCase();
+      if (t === 'ready') {
+        nfcReaderConnected = true;
+        emitNfcLog('[watch] ready');
+        finish({ success: true, watching: true, connected: true });
+        return;
       }
-      return rest;
-    };
 
-    const killTimer = setTimeout(() => {
-      try { emitNfcPyLog('ECHEC: TIMEOUT'); } catch (_) {}
-      try { child.kill('SIGKILL'); } catch (_) {}
-    }, 60_000);
+      if (t === 'present') {
+        nfcReaderConnected = true;
+        emitCardPresent(obj.uid || null);
+        emitNfcLog(`[watch] card present${obj.uid ? ` uid=${String(obj.uid)}` : ''}`);
+        return;
+      }
 
-    try {
-      child.stdout.on('data', (d) => {
-        const s = String(d || '');
-        stdoutAll += s;
-        stdoutBuf += s;
-        stdoutBuf = flushLines(stdoutBuf);
-      });
-      child.stderr.on('data', (d) => {
-        const s = String(d || '');
-        stderrAll += s;
-        stderrBuf += s;
-        const parts = stderrBuf.split(/\r?\n/);
-        stderrBuf = parts.pop() || '';
-        for (const p of parts) {
-          const line = String(p || '').trimEnd();
-          if (!line) continue;
-          emitNfcPyLog(`[stderr] ${line}`);
-          maybeStopOnFailure(line);
+      if (t === 'removed') {
+        nfcReaderConnected = true;
+        emitCardRemoved();
+        emitNfcLog('[watch] card removed');
+        return;
+      }
+
+      if (t === 'error') {
+        const code = String(obj.error || 'WATCHER_ERROR');
+        emitNfcLog(`[watch] error ${code}`);
+        if (code === 'NO_READER') {
+          nfcReaderConnected = false;
+          emitCardRemoved();
         }
-      });
-    } catch (_) {}
+        finish({ success: false, error: code, connected: nfcReaderConnected });
+      }
+    };
 
-    child.on('error', (e) => {
-      try { clearTimeout(killTimer); } catch (_) {}
-      finish({ ok: false, code: null, signal: null, error: String(e && e.message || e), stdout: stdoutAll, stderr: stderrAll });
+    presenceWatcherChild.stdout.on('data', (chunk) => {
+      presenceWatcherBuf += String(chunk || '');
+      const parts = presenceWatcherBuf.split(/\r?\n/);
+      presenceWatcherBuf = parts.pop() || '';
+      for (const ln of parts) handleLine(ln);
     });
 
-    child.on('exit', (code, signal) => {
-      try { clearTimeout(killTimer); } catch (_) {}
-      // Flush remaining partial line buffers
-      try {
-        const r1 = String(stdoutBuf || '').trim();
-        if (r1) emitNfcPyLog(r1);
-      } catch (_) {}
-      try {
-        const r2 = String(stderrBuf || '').trim();
-        if (r2) emitNfcPyLog(`[stderr] ${r2}`);
-      } catch (_) {}
-
-      finish({ ok: true, code: Number(code), signal: signal ? String(signal) : null, stdout: stdoutAll, stderr: stderrAll });
+    presenceWatcherChild.stderr.on('data', (chunk) => {
+      const line = String(chunk || '').trim();
+      if (line) emitNfcLog(`[watch][stderr] ${line}`);
     });
-  });
 
-  if (!result || result.ok === false) {
-    return { success: false, error: String(result && result.error || 'SPAWN_FAILED') };
-  }
-  if (result.code !== 0) {
-    return { success: false, error: `PY_EXIT_${result.code}` };
-  }
-
-  const out = String((result && result.stdout) || '').trim();
-  const lines = out.split(/\r?\n/).map((s) => String(s || '').trim()).filter(Boolean);
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i];
-    if (!line.startsWith('{')) continue;
-    try {
-      const j = JSON.parse(line);
-      if (j && j.success) {
-        return {
-          success: true,
-          uidCloned: j.uid || null,
-          blocksWritten: Number(j.blocks_written || 0)
-        };
+    presenceWatcherChild.on('close', (code) => {
+      presenceWatcherChild = null;
+      presenceWatcherBuf = '';
+      if (!resolved) {
+        finish({ success: false, error: `WATCHER_EXIT_${Number(code || 0)}` });
       }
-      if (j && j.success === false) {
-        return { success: false, error: String(j.error || 'WRITE_FAILED') };
+    });
+
+    presenceWatcherChild.on('error', (e) => {
+      presenceWatcherChild = null;
+      presenceWatcherBuf = '';
+      finish({ success: false, error: String(e && e.message || e || 'WATCHER_SPAWN_ERROR') });
+    });
+
+    setTimeout(() => {
+      if (!resolved) {
+        finish({ success: true, watching: true, connected: nfcReaderConnected });
       }
-    } catch (_) {}
-  }
-
-  // Exit code 0 but no parsable JSON success -> treat as failure
-  return { success: false, error: 'WRITE_FAILED' };
-}
-
-let NFCService = null;
-try {
-  const nfcPath = resolveResourcePath('electron', 'nfc', 'nfcService.js');
-  const mod = require(nfcPath);
-  NFCService = mod.NFCService || mod.default || mod;
-} catch (_) {
-  try {
-    NFCService = require('../nfc/nfcService').NFCService;
-  } catch (_e2) {
-    NFCService = null;
-  }
-}
-
-let nfcService = null;
-
-const adminLogBuffer = [];
-function emitAdminLog(line) {
-  const msg = `[${new Date().toISOString()}] ${String(line || '')}`;
-  adminLogBuffer.push(msg);
-  while (adminLogBuffer.length > 250) adminLogBuffer.shift();
-  BrowserWindow.getAllWindows().forEach((w) => {
-    try {
-      w.webContents.send('admin:log', msg);
-    } catch (_) {}
+    }, 1200);
   });
 }
-
-const MASTER_PASSWORD = process.env.PROPASS_MASTER_PASSWORD || 'PROPASS';
-const adminSessions = new Set();
-function newAdminToken() {
-  return `${Date.now()}_${Math.random().toString(16).slice(2)}`;
-}
-
-function assertAdmin(token) {
-  if (!token || !adminSessions.has(String(token))) {
-    throw new Error('Accès admin refusé');
-  }
-}
-
-let authSessionUser = null;
 
 function registerHandlers(ipcMain) {
-  // --- Auth ---
-  ipcMain.handle('auth:login', async (_event, username, password) => {
-    // Online verification each session (mandatory)
-    const online = await cloud.checkOnline();
-    if (!online) {
-      emitAdminLog(`LOGIN FAIL (offline) username=${String(username || '')}`);
-      return { success: false, error: 'OFFLINE' };
-    }
+  if (registered) return;
+  registered = true;
 
+  cloud.on('quota:update', (q) => {
+    broadcast('cloud:quotaUpdate', q || null);
+  });
+
+  ipcMain.handle('cloud:isOnline', async () => {
+    try {
+      const online = await cloud.checkOnline();
+      return { ok: true, online: !!online };
+    } catch (_) {
+      return { ok: true, online: false };
+    }
+  });
+
+  ipcMain.handle('auth:login', async (_event, username, password) => {
     try {
       const r = await cloud.login(String(username || ''), String(password || ''));
-      const role = String(r && r.role || 'client');
-      const token = r && r.token ? String(r.token) : null;
-      if (role === 'admin') {
-        authSessionUser = {
-          id: (r.user && r.user.id) || null,
-          username: (r.user && r.user.username) || String(username || ''),
-          role: 'admin',
-          email: null,
-          clientUsername: null
-        };
-        emitAdminLog(`LOGIN OK (cloud) username=${authSessionUser.username} role=admin`);
-        return { success: true, user: authSessionUser, token, role: 'admin' };
-      }
-
+      const u = (r && (r.client || r.user)) || {};
       authSessionUser = {
-        id: (r.client && r.client.id) || null,
-        username: (r.client && r.client.username) || String(username || ''),
-        role: 'client',
-        email: (r.client && r.client.email) || null,
-        clientUsername: (r.client && r.client.username) || String(username || '')
+        id: u.id || null,
+        username: u.username || String(username || ''),
+        email: u.email || null,
+        company_name: u.company_name || u.company || null,
+        role: String(r.role || (r.client ? 'client' : 'admin') || 'client')
       };
-      emitAdminLog(`LOGIN OK (cloud) username=${authSessionUser.username} role=client`);
-
-      // Dump sync loop (cloud-first, cached locally)
-      try {
-        startDumpSyncLoop({ clientId: authSessionUser.id || null });
-      } catch (_) {}
-
-      // push quota immediately after login (client)
-      try {
-        const q = await cloud.getQuota();
-        broadcastToAllWindows('cloud:quotaUpdate', q);
-      } catch (_) {}
-
-      return { success: true, user: authSessionUser, token, role: 'client' };
+      emitAdminLog(`LOGIN ${authSessionUser.role} ${authSessionUser.username}`);
+      return { success: true, token: r.token, user: authSessionUser };
     } catch (e) {
-      emitAdminLog(`LOGIN FAIL (cloud) username=${String(username || '')}`);
-      return { success: false, error: 'INVALID_CREDENTIALS' };
+      return { success: false, error: String(e && e.message || e || 'login_failed') };
     }
   });
 
   ipcMain.handle('auth:restoreSession', async (_event, payload = {}) => {
-    const online = await cloud.checkOnline();
-    if (!online) return { success: false, error: 'OFFLINE' };
-
-    const token = payload && payload.token ? String(payload.token) : null;
-    const user = payload && payload.user && typeof payload.user === 'object' ? payload.user : null;
-    if (!token || !user) return { success: false, error: 'missing_session' };
-
-    const role = String(user.role || 'client');
-    const username = String(user.username || user.clientUsername || '');
-    if (!username) return { success: false, error: 'missing_user' };
-
-    // Rehydrate CloudClient session
-    cloud.token = token;
-    cloud.role = role;
-    cloud.username = username;
-
-    authSessionUser = {
-      id: user.id || null,
-      username,
-      role,
-      email: user.email || null,
-      clientUsername: user.clientUsername || (role === 'client' ? username : null)
-    };
-
     try {
-      if (role === 'client') {
-        try { await cloud.connectWs(); } catch (_) {}
-        await cloud.getQuota();
+      const token = payload && payload.token ? String(payload.token) : null;
+      const u = payload && payload.user ? payload.user : null;
+      if (!token || !u) return { success: false, error: 'invalid_session_payload' };
 
-        // Dump sync loop (cloud-first, cached locally)
+      cloud.token = token;
+      cloud.role = String(u.role || 'client');
+      cloud.username = String(u.username || '');
+
+      authSessionUser = {
+        id: u.id || null,
+        username: u.username || '',
+        email: u.email || null,
+        company_name: u.company_name || u.company || null,
+        role: String(u.role || 'client')
+      };
+
+      if (authSessionUser.role === 'client') {
         try {
-          startDumpSyncLoop({ clientId: authSessionUser && authSessionUser.id || null });
+          const q = await cloud.getQuota();
+          broadcast('cloud:quotaUpdate', q || null);
         } catch (_) {}
-      } else {
-        // Validate token by calling a protected admin endpoint
-        await cloud.adminGetStats();
       }
-      emitAdminLog(`SESSION RESTORE OK username=${username} role=${role}`);
+
       return { success: true, user: authSessionUser };
     } catch (e) {
-      emitAdminLog(`SESSION RESTORE FAIL username=${username} role=${role}`);
-      authSessionUser = null;
-      try { cloud.logout(); } catch (_) {}
-      return { success: false, error: 'INVALID_SESSION' };
+      return { success: false, error: String(e && e.message || e || 'restore_failed') };
     }
   });
 
-  ipcMain.handle('auth:getCurrentUser', async () => {
-    return authSessionUser;
-  });
+  ipcMain.handle('auth:getCurrentUser', async () => authSessionUser || null);
 
   ipcMain.handle('auth:logout', async () => {
-    authSessionUser = null;
     try { cloud.logout(); } catch (_) {}
-    try { stopDumpSyncLoop(); } catch (_) {}
+    authSessionUser = null;
     return { success: true };
   });
 
   ipcMain.handle('auth:requestReset', async (_event, payload = {}) => {
-    const username = payload && payload.username;
-    if (!username) return { success: false, error: 'missing_username' };
-    const online = await cloud.checkOnline();
-    if (!online) return { success: false, error: 'OFFLINE' };
-    await cloud.requestPasswordReset(String(username));
-    return { success: true };
+    try {
+      const username = String(payload && payload.username || '').trim();
+      if (!username) return { success: false, error: 'username_required' };
+      await cloud.requestPasswordReset(username);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: String(e && e.message || e) };
+    }
   });
 
   ipcMain.handle('auth:confirmReset', async (_event, payload = {}) => {
-    const token = payload && payload.token;
-    const newPassword = payload && payload.newPassword;
-    if (!token || !newPassword) return { success: false, error: 'missing_fields' };
-    const online = await cloud.checkOnline();
-    if (!online) return { success: false, error: 'OFFLINE' };
-    await cloud.confirmPasswordReset(String(token), String(newPassword));
+    try {
+      const token = String(payload && payload.token || '').trim();
+      const newPassword = String(payload && payload.newPassword || '').trim();
+      if (!token || !newPassword) return { success: false, error: 'invalid_payload' };
+      await cloud.confirmPasswordReset(token, newPassword);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: String(e && e.message || e) };
+    }
+  });
+
+  ipcMain.handle('nfc:init', async () => {
+    try {
+      const r = await probeReaderConnection();
+      nfcReaderConnected = !!r.connected;
+      if (!r.connected) emitCardRemoved();
+      return r;
+    } catch (e) {
+      return { connected: false, readerName: null, raw: String(e && e.message || e) };
+    }
+  });
+
+  ipcMain.handle('nfc:isConnected', async () => {
+    try {
+      const r = await probeReaderConnection();
+      nfcReaderConnected = !!r.connected;
+      if (!r.connected) emitCardRemoved();
+    } catch (_) {
+      nfcReaderConnected = false;
+      emitCardRemoved();
+    }
+
+    return {
+      success: true,
+      connected: !!nfcReaderConnected,
+      cardPresent: !!nfcCardPresent,
+      uid: nfcCardUid || null
+    };
+  });
+
+  ipcMain.handle('nfc:startPresenceWatch', async () => {
+    try {
+      return await startPresenceWatcher();
+    } catch (e) {
+      return { success: false, error: String(e && e.message || e) };
+    }
+  });
+
+  ipcMain.handle('nfc:stopPresenceWatch', async () => {
+    stopPresenceWatcher();
     return { success: true };
   });
-  // --- Admin ---
-  ipcMain.handle('admin:login', async (_event, password) => {
-    if (String(password || '') !== String(MASTER_PASSWORD)) {
-      emitAdminLog('ADMIN LOGIN FAILED');
-      return { success: false };
+
+  ipcMain.handle('nfc:readDump', async (event) => {
+    const sender = event.sender;
+    try {
+      if (sender && !sender.isDestroyed()) sender.send('nfc:log', '[READ] Pose le badge SOURCE sur le lecteur…');
+      await runDumpScript('read', VAULT_FILE, sender);
+      if (!fs.existsSync(VAULT_FILE)) throw new Error('VAULT_EMPTY');
+      const stats = fs.statSync(VAULT_FILE);
+
+      let syncedToServer = false;
+      let syncError = null;
+      try {
+        const rawDump = fs.readFileSync(VAULT_FILE);
+        const dumpHexForCloud = normalizeDumpForCloudHex(rawDump);
+        const uid = rawDump.length >= 4 ? rawDump.subarray(0, 4).toString('hex').toUpperCase() : null;
+
+        if (authSessionUser && authSessionUser.role === 'admin') {
+          await cloud.adminSetActiveDump({ dumpHex: dumpHexForCloud, uid, source: 'direct' });
+          syncedToServer = true;
+          emitAdminLog(`EXTRACTION_SYNC_OK admin=${authSessionUser.username} size=${rawDump.length}`);
+          const payload = { source: 'cloud', uid, ts: Date.now() };
+          broadcast('dumps:dumpUpdated', payload);
+          broadcast('dump:updated', payload);
+        }
+      } catch (e) {
+        syncError = String(e && e.message || e || 'sync_failed');
+      }
+
+      if (sender && !sender.isDestroyed()) sender.send('nfc:log', `[READ] ✅ Dump sauvegardé (${stats.size} bytes)`);
+      if (authSessionUser && authSessionUser.role === 'admin' && !syncedToServer) {
+        return {
+          success: false,
+          error: `SYNC_SERVER_FAILED: ${syncError || 'unknown'}`,
+          vaultPath: VAULT_FILE,
+          size: stats.size,
+          synced: false
+        };
+      }
+      return { success: true, vaultPath: VAULT_FILE, size: stats.size, synced: syncedToServer };
+    } catch (e) {
+      if (sender && !sender.isDestroyed()) sender.send('nfc:log', `[READ] ❌ ${String(e && e.message || e)}`);
+      return { success: false, error: String(e && e.message || e) };
     }
-    const token = newAdminToken();
-    adminSessions.add(token);
-    emitAdminLog('ADMIN LOGIN OK');
-    return { success: true, token };
+  });
+
+  ipcMain.handle('nfc:writeDump', async (event, hex) => {
+    const sender = event.sender;
+    try {
+      if (hex != null) {
+        writeVaultForWriterFromHex(hex);
+      }
+
+      if (!fs.existsSync(VAULT_FILE)) {
+        throw new Error('VAULT_MISSING: dump source absent');
+      }
+
+      if (sender && !sender.isDestroyed()) sender.send('nfc:log', '[WRITE] Pose le badge CIBLE sur le lecteur…');
+      await runDumpScript('write', VAULT_FILE, sender);
+      if (sender && !sender.isDestroyed()) sender.send('nfc:log', '[WRITE] ✅ Badge copié avec succès');
+      return { success: true };
+    } catch (e) {
+      if (sender && !sender.isDestroyed()) sender.send('nfc:log', `[WRITE] ❌ ${String(e && e.message || e)}`);
+      return { success: false, error: String(e && e.message || e) };
+    }
+  });
+
+  ipcMain.handle('nfc:clearVault', async () => {
+    try {
+      if (fs.existsSync(VAULT_FILE)) fs.unlinkSync(VAULT_FILE);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: String(e && e.message || e) };
+    }
+  });
+
+  ipcMain.handle('nfc:vaultExists', async () => {
+    const exists = fs.existsSync(VAULT_FILE);
+    const size = exists ? fs.statSync(VAULT_FILE).size : 0;
+    return { exists, size, path: VAULT_FILE };
+  });
+
+  ipcMain.handle('dumps:getQuota', async () => {
+    try {
+      const q = await cloud.getQuota();
+      return { success: true, ...q };
+    } catch (e) {
+      return { success: false, error: String(e && e.message || e) };
+    }
+  });
+
+  ipcMain.handle('dumps:getActiveDump', async () => {
+    try {
+      const d = await cloud.getActiveDumpToCopy();
+      const dumpHex = String(d && d.dumpHex || '');
+      writeVaultForWriterFromHex(dumpHex);
+      return {
+        success: true,
+        source: 'cloud',
+        data: dumpHex,
+        uid: d && d.uid || null,
+        createdAt: d && d.createdAt || null,
+        lastSyncTs: Date.now()
+      };
+    } catch (e) {
+      try {
+        if (fs.existsSync(VAULT_FILE)) {
+          const buf = fs.readFileSync(VAULT_FILE);
+          const dumpHex = normalizeDumpForCloudHex(buf);
+          if (dumpHex.length >= 1536) {
+            return {
+              success: true,
+              source: 'local',
+              warning: '⚠️ Mode hors ligne - dump local utilisé',
+              data: dumpHex,
+              lastSyncTs: 0
+            };
+          }
+        }
+      } catch (_) {}
+      return { success: false, error: String(e && e.message || e || 'no_active_dump') };
+    }
+  });
+
+  ipcMain.handle('dumps:syncNow', async () => {
+    try {
+      const d = await cloud.getActiveDumpToCopy();
+      const dumpHex = String(d && d.dumpHex || '');
+      if (dumpHex && dumpHex.length >= 1536) {
+        writeVaultForWriterFromHex(dumpHex);
+        const payload = { source: 'cloud', uid: d && d.uid || null, ts: Date.now() };
+        broadcast('dumps:dumpUpdated', payload);
+        broadcast('dump:updated', payload);
+        return { success: true, updated: true, source: 'cloud' };
+      }
+      return { success: false, error: 'DUMP_HEX_INVALID' };
+    } catch (e) {
+      return { success: false, error: String(e && e.message || e) };
+    }
+  });
+
+  ipcMain.handle('dumps:writeAdminDump', async () => {
+    if (!(authSessionUser && authSessionUser.role === 'client')) {
+      return { success: false, error: 'client_required' };
+    }
+    try {
+      const q = await cloud.decrementQuota();
+      broadcast('cloud:quotaUpdate', q || null);
+      const company = resolveCompanyNameFromUser(authSessionUser);
+      appendLocalLog('Copié', company);
+      emitAdminLog(`COPIE client=${authSessionUser.username} remaining=${Number(q && q.remaining || 0)}`);
+      return { success: true, quota: q };
+    } catch (e) {
+      try { await cloud.logCopyFail(); } catch (_) {}
+      const company = resolveCompanyNameFromUser(authSessionUser);
+      appendLocalLog('Échec copie', company);
+      emitAdminLog(`ECHEC_COPIE client=${authSessionUser.username} reason=${String(e && e.message || e)}`);
+      return { success: false, error: String(e && e.message || e) };
+    }
+  });
+
+  ipcMain.handle('dumps:logCopyFail', async () => {
+    try { await cloud.logCopyFail(); } catch (_) {}
+    const company = resolveCompanyNameFromUser(authSessionUser);
+    appendLocalLog('Échec copie', company);
+    emitAdminLog(`ECHEC_COPIE client=${authSessionUser && authSessionUser.username || 'unknown'}`);
+    return { success: true };
   });
 
   ipcMain.handle('admin:getSessionToken', async () => {
-    if (!(authSessionUser && authSessionUser.role === 'admin')) {
-      return { success: false };
+    if (!(authSessionUser && authSessionUser.role === 'admin' && cloud.token)) {
+      return { success: false, error: 'admin_required' };
     }
-    const token = newAdminToken();
-    adminSessions.add(token);
-    emitAdminLog('ADMIN SESSION TOKEN ISSUED');
-    return { success: true, token };
+    return { success: true, token: cloud.token };
   });
 
-  // --- Sites (for Sidebar) ---
-  ipcMain.handle('sites:getAll', async () => {
+  ipcMain.handle('admin:listClients', async () => {
     if (!(authSessionUser && authSessionUser.role === 'admin')) {
       return { success: false, error: 'admin_required' };
     }
-    const sites = await cloud.adminListAllSites();
-    return { success: true, sites };
+    try {
+      const clients = await cloud.adminListClients();
+      return { success: true, clients };
+    } catch (e) {
+      return { success: false, error: String(e && e.message || e) };
+    }
   });
 
-  ipcMain.handle('sites:create', async (_event, payload = {}) => {
+  ipcMain.handle('admin:addQuota', async (_event, _token, payload = {}) => {
     if (!(authSessionUser && authSessionUser.role === 'admin')) {
       return { success: false, error: 'admin_required' };
     }
-    const clientUsername = payload && (payload.clientUsername || payload.username);
-    const name = payload && payload.name;
-    if (!clientUsername || !name) return { success: false, error: 'missing_fields' };
-    const sites = await cloud.adminCreateSite({ username: String(clientUsername), name: String(name) });
-    emitAdminLog(`SITE CREATE client=${String(clientUsername)} name=${String(name)}`);
-    return { success: true, sites };
-  });
-
-  ipcMain.handle('admin:getDbPath', async (_event, token) => {
-    assertAdmin(token);
-    return { success: true, path: getDatabasePath() };
-  });
-
-  ipcMain.handle('admin:backupDb', async (_event, token) => {
-    assertAdmin(token);
-    const dbPath = getDatabasePath();
-    if (!fs.existsSync(dbPath)) {
-      throw new Error(`database.db introuvable: ${dbPath}`);
+    try {
+      const clientId = payload && payload.clientId;
+      const username = payload && payload.username;
+      const addQuota = Number(payload && payload.addQuota || 0);
+      const row = await cloud.adminAddQuota({ clientId, username, addQuota, validityDays: 30 });
+      const company = String(row && (row.company_name || row.company || row.username || row.id) || '—');
+      appendLocalLog(`Recharge quota (+${addQuota})`, company);
+      emitAdminLog(`RECHARGE client=${company} +${addQuota} remaining=${Number(row && row.quota_remaining || 0)}`);
+      return { success: true, client: row };
+    } catch (e) {
+      return { success: false, error: String(e && e.message || e) };
     }
-    const result = await dialog.showOpenDialog({
-      title: 'Choisir un dossier de sauvegarde',
-      properties: ['openDirectory', 'createDirectory']
-    });
-    if (result.canceled || !result.filePaths || !result.filePaths[0]) {
-      return { success: false, canceled: true };
+  });
+
+  ipcMain.handle('admin:getStats', async () => {
+    if (!(authSessionUser && authSessionUser.role === 'admin')) {
+      return { success: false, error: 'admin_required' };
     }
-    const outDir = result.filePaths[0];
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const outPath = path.join(outDir, `database_backup_${stamp}.db`);
-    fs.copyFileSync(dbPath, outPath);
-    emitAdminLog(`DB BACKUP -> ${outPath}`);
-    return { success: true, outPath };
-  });
-
-  ipcMain.handle('admin:listClients', async (_event, token) => {
-    assertAdmin(token);
-    const clients = await cloud.adminListClients();
-    return { success: true, clients };
-  });
-
-  ipcMain.handle('admin:addQuota', async (_event, token, payload) => {
-    assertAdmin(token);
-    const clientId = payload && payload.clientId;
-    const username = payload && payload.username;
-    const addQuota = payload && payload.addQuota;
-
-    const row = await cloud.adminAddQuota({ clientId, username, addQuota, validityDays: 30 });
-    emitAdminLog(`ADD QUOTA cloud client=${row && (row.username || row.id)} +${addQuota} -> remaining=${row && row.quota_remaining}`);
-    return { success: true, client: row };
-  });
-
-  ipcMain.handle('admin:createMasterDump', async (_event, token, payload) => {
-    assertAdmin(token);
-    const mode = (payload && payload.mode) || 'direct';
-    const clientId = payload && payload.clientId;
-    const username = payload && payload.username;
-    const siteId = payload && payload.siteId;
-
-    if (mode === 'manual') {
-      const dumpHex = payload && payload.dumpHex;
-      const uid = payload && payload.uid;
-      if (!dumpHex) throw new Error('Dump manuel requis');
-      emitAdminLog(`MASTER DUMP MANUAL START client=${username || clientId}`);
-      const client = await cloud.adminUpsertMasterDump({ clientId, username, dumpHex: String(dumpHex), uid: uid || null, source: 'manual', siteId });
-      emitAdminLog(`MASTER DUMP MANUAL OK client=${username || clientId}`);
-      return { success: true, client };
+    try {
+      const stats = await cloud.adminGetStats();
+      let totalCopies = Number(stats && stats.totalCopies || 0);
+      try {
+        const logs = await cloud.adminGetLogs({ action: 'Copié', page: 1, limit: 1 });
+        const fromLogs = Number(logs && logs.total || 0);
+        if (Number.isFinite(fromLogs) && fromLogs > totalCopies) totalCopies = fromLogs;
+      } catch (_) {}
+      return {
+        success: true,
+        stats: {
+          totalClients: Number(stats && stats.totalClients || 0),
+          totalCopies: Number.isFinite(totalCopies) ? totalCopies : 0
+        }
+      };
+    } catch (e) {
+      return { success: false, error: String(e && e.message || e) };
     }
+  });
 
-    // MODE AUTOMATIQUE (Direct Hardware)
-    if (!nfcService) {
-      if (!NFCService) throw new Error('NFCService indisponible');
-      nfcService = new NFCService();
-      await nfcService.init();
+  ipcMain.handle('admin:getCopyStats', async (_event, period) => {
+    if (!(authSessionUser && authSessionUser.role === 'admin')) {
+      return { success: false, error: 'admin_required' };
     }
+    try {
+      const mode = String(period || 'monthly') === 'weekly' ? 'weekly' : 'monthly';
+      const stats = await cloud.adminGetCopyStats(mode);
+      const totalSuccess = (Array.isArray(stats && stats.success) ? stats.success : []).reduce((a, b) => a + Number(b || 0), 0);
+      const totalFail = (Array.isArray(stats && stats.fail) ? stats.fail : []).reduce((a, b) => a + Number(b || 0), 0);
 
-    emitAdminLog(`MASTER DUMP DIRECT START client=${username || clientId}`);
-    const res = await nfcService.readDump();
-    if (!res || !res.success) throw new Error(res && res.error ? res.error : 'Lecture NFC échouée');
-    const dumpHex = Buffer.isBuffer(res.dump) ? res.dump.toString('hex') : String(res.dump || '');
-    const client = await cloud.adminUpsertMasterDump({ clientId, username, dumpHex, uid: res.uid || null, source: 'direct', siteId });
-    emitAdminLog(`MASTER DUMP DIRECT OK client=${username || clientId} uid=${res.uid || ''}`);
-    return { success: true, client };
-  });
+      if ((totalSuccess + totalFail) > 0) {
+        return { success: true, ...stats };
+      }
 
-  // --- Multi-sites ---
-  ipcMain.handle('admin:listSites', async (_event, token, payload = {}) => {
-    assertAdmin(token);
-    const clientId = payload && payload.clientId;
-    const username = payload && payload.username;
-    const sites = await cloud.adminListSites({ clientId, username });
-    return { success: true, sites };
-  });
+      const logs = await cloud.adminGetLogs({ page: 1, limit: 5000 });
+      const rows = Array.isArray(logs && logs.rows) ? logs.rows : [];
+      const now = new Date();
+      const today = new Date(now);
+      today.setHours(0, 0, 0, 0);
 
-  ipcMain.handle('admin:createSite', async (_event, token, payload = {}) => {
-    assertAdmin(token);
-    const clientId = payload && payload.clientId;
-    const username = payload && payload.username;
-    const name = payload && payload.name;
-    const sites = await cloud.adminCreateSite({ clientId, username, name: String(name || '') });
-    emitAdminLog(`SITE CREATE client=${username || clientId} name=${String(name || '')}`);
-    return { success: true, sites };
-  });
+      const buckets = [];
+      if (mode === 'weekly') {
+        for (let i = 6; i >= 0; i--) {
+          const d = new Date(today);
+          d.setDate(d.getDate() - i);
+          const dd = String(d.getDate()).padStart(2, '0');
+          const mm = String(d.getMonth() + 1).padStart(2, '0');
+          buckets.push({
+            label: `${dd}/${mm}`,
+            start: d.getTime(),
+            end: d.getTime() + 86400000
+          });
+        }
+      } else {
+        const start = new Date(today.getFullYear(), today.getMonth(), 1);
+        start.setMonth(start.getMonth() - 11);
+        for (let i = 0; i < 12; i++) {
+          const m = new Date(start.getFullYear(), start.getMonth() + i, 1);
+          const next = new Date(m.getFullYear(), m.getMonth() + 1, 1);
+          const mm = String(m.getMonth() + 1).padStart(2, '0');
+          buckets.push({
+            label: `${mm}/${m.getFullYear()}`,
+            start: m.getTime(),
+            end: next.getTime()
+          });
+        }
+      }
 
-  ipcMain.handle('admin:renameSite', async (_event, token, payload = {}) => {
-    assertAdmin(token);
-    const siteId = payload && payload.siteId;
-    const name = payload && payload.name;
-    await cloud.adminRenameSite({ siteId, name: String(name || '') });
-    emitAdminLog(`SITE RENAME id=${siteId} name=${String(name || '')}`);
-    return { success: true };
-  });
+      const success = Array.from({ length: buckets.length }, () => 0);
+      const fail = Array.from({ length: buckets.length }, () => 0);
 
-  ipcMain.handle('admin:deleteSite', async (_event, token, payload = {}) => {
-    assertAdmin(token);
-    const siteId = payload && payload.siteId;
-    await cloud.adminDeleteSite({ siteId });
-    emitAdminLog(`SITE DELETE id=${siteId}`);
-    return { success: true };
-  });
+      for (const r of rows) {
+        const ts = Number(r && r.ts);
+        if (!Number.isFinite(ts)) continue;
+        let idx = -1;
+        for (let i = 0; i < buckets.length; i++) {
+          if (ts >= buckets[i].start && ts < buckets[i].end) {
+            idx = i;
+            break;
+          }
+        }
+        if (idx < 0) continue;
+        const action = String(r && r.action || '').toLowerCase();
+        const isFail = action.includes('échec') || action.includes('echec') || action.includes('fail');
+        if (isFail) fail[idx] += 1;
+        else success[idx] += 1;
+      }
 
-  ipcMain.handle('admin:listAllSites', async (_event, token) => {
-    assertAdmin(token);
-    const sites = await cloud.adminListAllSites();
-    return { success: true, sites };
-  });
-
-  ipcMain.handle('admin:testCopy', async (_event, token, payload) => {
-    assertAdmin(token);
-    const clientId = payload && payload.clientId;
-    const username = payload && payload.username;
-    const dump = await cloud.adminGetLatestMasterDump({ clientId, username });
-
-    if (!nfcService) {
-      if (!NFCService) throw new Error('NFCService indisponible');
-      nfcService = new NFCService();
-      await nfcService.init();
+      return {
+        success: true,
+        period: mode,
+        labels: buckets.map((b) => b.label),
+        success,
+        fail
+      };
+    } catch (e) {
+      return { success: false, error: String(e && e.message || e) };
     }
-
-    emitAdminLog(`TEST COPY START client=${username || clientId}`);
-    const writeRes = await nfcService.writeDump(String(dump.dumpHex));
-    if (!writeRes || !writeRes.success) {
-      emitAdminLog(`TEST COPY FAIL client=${username || clientId}`);
-      return { success: false, error: writeRes && writeRes.error ? writeRes.error : 'Écriture échouée' };
-    }
-    emitAdminLog(`TEST COPY OK clientId=${clientId} blocks=${writeRes.blocksWritten}`);
-    return { success: true, result: writeRes };
-  });
-
-  ipcMain.handle('admin:getAdminLogs', async (_event, token) => {
-    assertAdmin(token);
-    return { success: true, logs: adminLogBuffer.slice(-200) };
   });
 
   ipcMain.handle('admin:getLogs', async (_event, filters = {}) => {
@@ -930,8 +928,8 @@ function registerHandlers(ipcMain) {
       return { success: false, error: 'admin_required' };
     }
     try {
-      const r = await cloud.adminGetLogs(filters || {});
-      return { success: true, ...r };
+      const merged = await buildMergedLogs(filters || {});
+      return { success: true, ...merged };
     } catch (e) {
       return { success: false, error: String(e && e.message || e) };
     }
@@ -954,79 +952,139 @@ function registerHandlers(ipcMain) {
     });
     if (pick.canceled || !pick.filePath) return { success: false, canceled: true };
 
-    const filePath = pick.filePath;
+    try {
+      const merged = await buildMergedLogs({ ...(filters || {}), page: 1, limit: 5000 });
+      const escapeCsv = (v) => {
+        const s = String(v == null ? '' : v);
+        if (/[",\n\r;]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
+        return s;
+      };
 
-    // Server-side pagination export (lazy): fetch in pages to keep memory bounded.
-    const limit = 5000;
-    let page = 1;
-    let total = 0;
-    let pageCount = 1;
-
-    const escapeCsv = (v) => {
-      const s = String(v == null ? '' : v);
-      if (/[",\n\r;]/.test(s)) return '"' + s.replace(/"/g, '""') + '"';
-      return s;
-    };
-
-    const header = ['ID', 'Société', 'Action', 'Date', 'Heure'].join(';') + '\n';
-    fs.writeFileSync(filePath, header, 'utf8');
-
-    do {
-      const r = await cloud.adminGetLogs({ ...(filters || {}), page, limit });
-      total = Number(r.total || 0);
-      pageCount = Number(r.pageCount || 1);
-      const rows = Array.isArray(r.rows) ? r.rows : [];
+      const header = ['ID', 'Société', 'Action', 'Date', 'Heure'].join(';') + '\n';
+      fs.writeFileSync(pick.filePath, header, 'utf8');
 
       let chunk = '';
-      for (const row of rows) {
-        const ts = Number(row.ts);
+      for (const row of merged.rows || []) {
+        const ts = Number(row.ts || 0);
         const dt = Number.isFinite(ts) ? new Date(ts) : new Date();
         const date = dt.toLocaleDateString('fr-FR');
         const time = dt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
-        const id = `#${row.id}`;
         chunk += [
-          escapeCsv(id),
+          escapeCsv(`#${row.id}`),
           escapeCsv(row.company_name || '—'),
           escapeCsv(row.action || '—'),
           escapeCsv(date),
           escapeCsv(time)
         ].join(';') + '\n';
       }
-      if (chunk) fs.appendFileSync(filePath, chunk, 'utf8');
-      page += 1;
-      // safety to avoid runaway export
-      if (page > 5000) break;
-    } while (page <= pageCount);
-
-    return { success: true, filePath, total };
-  });
-
-  // --- Admin Dashboard (server-backed stats) ---
-  ipcMain.handle('admin:getStats', async () => {
-    if (!(authSessionUser && authSessionUser.role === 'admin')) {
-      return { success: false, error: 'admin_required' };
-    }
-    try {
-      const stats = await cloud.adminGetStats();
-      return { success: true, stats };
+      fs.appendFileSync(pick.filePath, chunk, 'utf8');
+      return { success: true, filePath: pick.filePath, total: Number(merged.total || 0) };
     } catch (e) {
       return { success: false, error: String(e && e.message || e) };
     }
   });
 
-  ipcMain.handle('admin:getCopyStats', async (_event, period) => {
+  ipcMain.handle('admin:getAdminLogs', async () => {
+    if (!(authSessionUser && authSessionUser.role === 'admin')) {
+      return { success: false, error: 'admin_required' };
+    }
+    return { success: true, logs: adminLogs.slice(-200) };
+  });
+
+  ipcMain.handle('admin:listAllSites', async () => {
     if (!(authSessionUser && authSessionUser.role === 'admin')) {
       return { success: false, error: 'admin_required' };
     }
     try {
-      const stats = await cloud.adminGetCopyStats(String(period || 'monthly'));
-      return { success: true, ...stats };
+      const sites = await cloud.adminListAllSites();
+      return { success: true, sites };
     } catch (e) {
       return { success: false, error: String(e && e.message || e) };
     }
   });
 
-  ipcMain.handle('admin:syncCopyEvents', async (_event, events) => {
+  ipcMain.handle('admin:listSites', async (_event, _token, payload = {}) => {
+    if (!(authSessionUser && authSessionUser.role === 'admin')) {
+      return { success: false, error: 'admin_required' };
+    }
+    try {
+      const sites = await cloud.adminListSites({ clientId: payload.clientId, username: payload.username });
+      return { success: true, sites };
+    } catch (e) {
+      return { success: false, error: String(e && e.message || e) };
+    }
+  });
+
+  ipcMain.handle('admin:createSite', async (_event, _token, payload = {}) => {
+    if (!(authSessionUser && authSessionUser.role === 'admin')) {
+      return { success: false, error: 'admin_required' };
+    }
+    try {
+      const sites = await cloud.adminCreateSite({ clientId: payload.clientId, username: payload.username, name: payload.name });
+      return { success: true, sites };
+    } catch (e) {
+      return { success: false, error: String(e && e.message || e) };
+    }
+  });
+
+  ipcMain.handle('admin:renameSite', async (_event, _token, payload = {}) => {
+    if (!(authSessionUser && authSessionUser.role === 'admin')) {
+      return { success: false, error: 'admin_required' };
+    }
+    try {
+      await cloud.adminRenameSite({ siteId: payload.siteId, name: payload.name });
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: String(e && e.message || e) };
+    }
+  });
+
+  ipcMain.handle('admin:deleteSite', async (_event, _token, payload = {}) => {
+    if (!(authSessionUser && authSessionUser.role === 'admin')) {
+      return { success: false, error: 'admin_required' };
+    }
+    try {
+      await cloud.adminDeleteSite({ siteId: payload.siteId });
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: String(e && e.message || e) };
+    }
+  });
+
+  ipcMain.handle('admin:createMasterDump', async (_event, _token, payload = {}) => {
+    if (!(authSessionUser && authSessionUser.role === 'admin')) {
+      return { success: false, error: 'admin_required' };
+    }
+    try {
+      if (String(payload.mode || 'direct') === 'manual') {
+        const dumpHex = String(payload.dumpHex || '');
+        await cloud.adminUpsertMasterDump({
+          clientId: payload.clientId,
+          username: payload.username,
+          dumpHex,
+          uid: payload.uid || null,
+          source: 'manual',
+          siteId: payload.siteId == null ? null : Number(payload.siteId)
+        });
+      } else {
+        const d = await cloud.getLatestMasterDump();
+        await cloud.adminUpsertMasterDump({
+          clientId: payload.clientId,
+          username: payload.username,
+          dumpHex: String(d.dumpHex || ''),
+          uid: d.uid || null,
+          source: 'direct',
+          siteId: payload.siteId == null ? null : Number(payload.siteId)
+        });
+      }
+      emitAdminLog(`DUMP actif mis à jour clientId=${payload.clientId || 'n/a'}`);
+      return { success: true };
+    } catch (e) {
+      return { success: false, error: String(e && e.message || e) };
+    }
+  });
+
+  ipcMain.handle('admin:syncCopyEvents', async (_event, events = []) => {
     if (!(authSessionUser && authSessionUser.role === 'admin')) {
       return { success: false, error: 'admin_required' };
     }
@@ -1038,7 +1096,9 @@ function registerHandlers(ipcMain) {
     }
   });
 
-  // --- Admin Clients CRUD (for Mes clients page) ---
+  ipcMain.handle('admin:backupDb', async () => ({ success: true }));
+  ipcMain.handle('admin:getDbPath', async () => ({ success: true, path: '' }));
+  ipcMain.handle('admin:testCopy', async () => ({ success: true }));
   ipcMain.handle('admin:getClients', async () => {
     if (!(authSessionUser && authSessionUser.role === 'admin')) {
       return { success: false, error: 'admin_required' };
@@ -1057,7 +1117,7 @@ function registerHandlers(ipcMain) {
     }
     try {
       const r = await cloud.adminCreateClient(payload || {});
-      return { success: true, client: r.client, tempPassword: r.tempPassword || null };
+      return { success: true, client: r && r.client ? r.client : null, tempPassword: r && r.tempPassword ? r.tempPassword : null };
     } catch (e) {
       return { success: false, error: String(e && e.message || e) };
     }
@@ -1099,353 +1159,12 @@ function registerHandlers(ipcMain) {
     }
   });
 
-  ipcMain.handle('ppc:hw-status-nfc', async () => {
-    const connected = !!(nfcService && nfcService.isConnected());
-    return { ok: true, connected, reader: connected ? nfcService.getReaderName() : null };
-  });
-
-  ipcMain.handle('ppc:nfc-read-gen2', async () => {
-    try {
-      if (!nfcService) return { ok: false, error: 'NFC non initialisé' };
-      const result = await nfcService.readDump();
-      if (!result.success) return { ok: false, error: result.error };
-      const vaultDir = path.join(__dirname, '..', '..', 'VAULT');
-      if (!fs.existsSync(vaultDir)) fs.mkdirSync(vaultDir, { recursive: true });
-      const outPath = path.join(vaultDir, 'SOURCE_ZERO.bin');
-      fs.writeFileSync(outPath, result.dump);
-      return { ok: true, path: outPath, blocks: result.blocksRead, uid: result.uid };
-    } catch (e) {
-      return { ok: false, error: e.message };
-    }
-  });
-
-  ipcMain.handle('ppc:nfc-write-gen2', async (_event, vaultPath) => {
-    try {
-      if (!nfcService) return { ok: false, error: 'NFC non initialisé' };
-      if (!vaultPath) throw new Error('vault path required');
-      if (!fs.existsSync(vaultPath)) throw new Error('vault file missing');
-      const buf = fs.readFileSync(vaultPath);
-      if (buf.length < 1024) throw new Error('vault dump too small');
-      const result = await nfcService.writeDump(buf.toString('hex'));
-      if (!result.success) return { ok: false, error: result.error };
-      return { ok: true, written: result.blocksWritten, uidCloned: result.uidCloned };
-    } catch (e) {
-      return { ok: false, error: e.message };
-    }
-  });
-
-  ipcMain.handle('nfc:init', async () => {
-    try {
-      if (!NFCService) throw new Error('NFCService indisponible');
-      if (nfcService) {
-        return { success: true, readerName: nfcService.getReaderName(), mode: 'Gen2' };
-      }
-
-      nfcService = new NFCService();
-      await nfcService.init();
-
-      nfcService.onCardPresent((uid) => {
-        BrowserWindow.getAllWindows().forEach((w) => w.webContents.send('nfc:cardPresent', uid));
-      });
-      nfcService.onCardRemoved(() => {
-        BrowserWindow.getAllWindows().forEach((w) => w.webContents.send('nfc:cardRemoved'));
-      });
-
-      return { success: true, readerName: nfcService.getReaderName(), mode: 'Gen2' };
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle('nfc:isConnected', async () => {
-    try {
-      return !!(nfcService && nfcService.isConnected());
-    } catch (_) {
-      return false;
-    }
-  });
-
-  ipcMain.handle('nfc:startPresenceWatch', async () => {
-    try {
-      return startPresenceWatcher();
-    } catch (e) {
-      return { success: false, error: String(e && e.message || e) };
-    }
-  });
-
-  ipcMain.handle('nfc:stopPresenceWatch', async () => {
-    try {
-      stopPresenceWatcher();
-      return { success: true };
-    } catch (e) {
-      return { success: false, error: String(e && e.message || e) };
-    }
-  });
-
-  ipcMain.handle('nfc:readDump', async () => {
-    try {
-      // Python NFC engine (required): backend/nfc/dump.py
-      const r = await runPythonDump();
-
-      const out = (r && typeof r === 'object') ? { ...r } : r;
-
-      // Sync to cloud when an admin captured a new dump (so clients can download it).
-      try {
-        if (out && out.success && out.dumpHex && authSessionUser && authSessionUser.role === 'admin') {
-          try {
-            await cloud.adminSetActiveDump({ dumpHex: String(out.dumpHex), uid: out.uid || null, source: 'direct' });
-            emitAdminLog(`ACTIVE DUMP AUTO-PUBLISHED uid=${String(out.uid || '')}`);
-            out.cloudPublish = { ok: true };
-          } catch (e) {
-            emitAdminLog(`ACTIVE DUMP AUTO-PUBLISH FAILED ${String(e && e.message || e)}`);
-            out.cloudPublish = { ok: false, error: String(e && e.message || e) };
-          }
-        }
-      } catch (_) {}
-
-      // Client: upload a master dump to cloud (store on server).
-      try {
-        if (out && out.success && out.dumpHex && authSessionUser && authSessionUser.role === 'client') {
-          try {
-            const dump = await cloud.uploadMasterDump({ dumpHex: String(out.dumpHex), uid: out.uid || null });
-            out.cloudUpload = { ok: true, dumpId: dump && dump.id != null ? Number(dump.id) : null };
-          } catch (e) {
-            out.cloudUpload = { ok: false, error: String(e && e.message || e) };
-          }
-        }
-      } catch (_) {}
-
-      return out;
-    } catch (error) {
-      const code = error && (error.code || error.message) ? String(error.code || error.message) : 'NFC_ERROR';
-      return { success: false, error: code };
-    }
-  });
-
-  // --- Dump: save active dump to cloud SQLite ---
-  ipcMain.handle('dump:saveActive', async (_event, token, payload = {}) => {
-    assertAdmin(token);
-    const dumpHex = payload && payload.dumpHex;
-    const uid = payload && payload.uid;
-    const source = payload && payload.source;
-    if (!dumpHex) return { success: false, error: 'missing_dump' };
-    const r = await cloud.adminSetActiveDump({ dumpHex: String(dumpHex), uid: uid || null, source: source === 'direct' ? 'direct' : 'manual' });
-    emitAdminLog(`ACTIVE DUMP SET uid=${uid || ''} source=${String(source || '')}`);
-    return { success: true, dump: r };
-  });
-
-  // --- Dump: upload cached VAULT dump to cloud (client) ---
-  ipcMain.handle('dump:uploadFromVault', async () => {
-    try {
-      if (!(authSessionUser && authSessionUser.role === 'client')) {
-        return { success: false, error: 'client_required' };
-      }
-      if (!cloud || !cloud.token) return { success: false, error: 'not_authenticated' };
-
-      const dumpPath = getUserVaultDumpPath();
-      if (!fs.existsSync(dumpPath)) return { success: false, error: 'NO_DUMP', path: dumpPath };
-      const buf = fs.readFileSync(dumpPath);
-      if (!buf || buf.length < 1024) return { success: false, error: 'DUMP_TOO_SMALL', size: buf ? buf.length : 0 };
-
-      const dumpHex = bufferToHex(buf.slice(0, 1024));
-      const dump = await cloud.uploadMasterDump({ dumpHex, uid: null });
-      return { success: true, dumpId: dump && dump.id != null ? Number(dump.id) : null };
-    } catch (e) {
-      return { success: false, error: String(e && e.message || e) };
-    }
-  });
-
-  ipcMain.handle('nfc:writeDump', async (_event, data) => {
-    try {
-      // Client flow: use Python writer (pyscard) from cached VAULT dump.
-      if (authSessionUser && authSessionUser.role === 'client') {
-        return await runPythonWriteFromVault();
-      }
-
-      if (!nfcService) return { success: false, error: 'NFC non initialisé' };
-
-      return await nfcService.writeDump(data);
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle('dumps:getQuota', async (_event, payload = {}) => {
-    try {
-      const q = await cloud.getQuota();
-      // unify payload for existing UI
-      const remaining = Number(q.remaining || 0);
-      const monthlyLimit = Number(q.monthly_limit || 15);
-      const used = q.copies_this_month != null ? Number(q.copies_this_month || 0) : Math.max(0, monthlyLimit - remaining);
-      return { remaining, monthly_limit: monthlyLimit, copies_this_month: used, valid_until: q.valid_until || null };
-    } catch (e) {
-      return { remaining: 0, monthly_limit: 0, blocked: true, blocked_reason: String(e && e.message || e) };
-    }
-  });
-
-  ipcMain.handle('dumps:getActiveDump', async (_event, clientId) => {
-    // Spec order:
-    // 1) Cloud first: GET /api/client/dump/active (Bearer + client-id)
-    //    - If success: cache to userData/VAULT/SOURCE_ZERO.bin
-    // 2) If cloud fails: fallback to local cache with warning
-    // 3) If no local: return explicit error
-
-    // Step 1 — Cloud
-    try {
-      const localMeta = readDumpMeta();
-      const localHash = localMeta && localMeta.hash ? String(localMeta.hash) : null;
-      const r = await fetchActiveDumpBinary({ clientId, ifNoneMatch: localHash });
-
-      if (r && r.ok && r.notModified) {
-        // Use local cached file (already latest)
-        const dumpPath = getUserVaultDumpPath();
-        if (fs.existsSync(dumpPath)) {
-          const buf = fs.readFileSync(dumpPath);
-          const hex = bufferToHex(buf.slice(0, 1024));
-          return {
-            success: true,
-            source: 'cloud',
-            data: hex,
-            hash: localHash,
-            lastSyncTs: Number(localMeta && localMeta.lastSyncTs || 0) || Date.now()
-          };
-        }
-        // If file missing, force a full download next.
-      } else if (r && r.ok && r.bytes) {
-        const dumpPath = getUserVaultDumpPath();
-        fs.writeFileSync(dumpPath, r.bytes);
-
-        const meta = {
-          hash: r.hash || sha256Hex(r.bytes),
-          lastSyncTs: Date.now(),
-          cloudUpdatedAt: r.updatedAt || null,
-          source: 'cloud'
-        };
-        writeDumpMeta(meta);
-
-        const hex = bufferToHex(r.bytes.slice(0, 1024));
-        return {
-          success: true,
-          source: 'cloud',
-          data: hex,
-          hash: meta.hash,
-          lastSyncTs: meta.lastSyncTs
-        };
-      }
-    } catch (_) {
-      // ignore and fall back
-    }
-
-    // Step 2 — Local fallback
-    try {
-      const dumpPath = getUserVaultDumpPath();
-      if (fs.existsSync(dumpPath)) {
-        const buf = fs.readFileSync(dumpPath);
-        if (buf && buf.length >= 1024) {
-          const meta = readDumpMeta();
-          const hex = bufferToHex(buf.slice(0, 1024));
-          return {
-            success: true,
-            source: 'local',
-            warning: '⚠️ Mode hors ligne - dump local utilisé',
-            data: hex,
-            hash: meta && meta.hash ? String(meta.hash) : sha256Hex(buf.slice(0, 1024)),
-            lastSyncTs: Number(meta && meta.lastSyncTs || 0) || 0
-          };
-        }
-      }
-    } catch (_) {
-      // ignore
-    }
-
-    // Step 2b — Legacy project VAULT fallback (dev only)
-    try {
-      const legacy = path.join(getVaultDir(), 'SOURCE_ZERO.bin');
-      if (fs.existsSync(legacy)) {
-        const buf = fs.readFileSync(legacy);
-        if (buf && buf.length >= 1024) {
-          // Import into userData VAULT so the installed app always has a writable cache.
-          try {
-            const dumpPath = getUserVaultDumpPath();
-            fs.writeFileSync(dumpPath, buf.slice(0, 1024));
-            const st = (() => { try { return fs.statSync(legacy); } catch (_) { return null; } })();
-            const meta = {
-              hash: sha256Hex(buf.slice(0, 1024)),
-              lastSyncTs: st && st.mtimeMs ? Math.round(st.mtimeMs) : Date.now(),
-              cloudUpdatedAt: null,
-              source: 'local-import'
-            };
-            writeDumpMeta(meta);
-          } catch (_) {}
-
-          const hex = bufferToHex(buf.slice(0, 1024));
-          const meta2 = readDumpMeta();
-          return {
-            success: true,
-            source: 'local',
-            warning: '⚠️ Mode hors ligne - dump local utilisé',
-            data: hex,
-            hash: (meta2 && meta2.hash) ? String(meta2.hash) : sha256Hex(buf.slice(0, 1024)),
-            lastSyncTs: Number(meta2 && meta2.lastSyncTs || 0) || 0
-          };
-        }
-      }
-    } catch (_) {}
-
-    // Step 3 — Error
-    return {
-      success: false,
-      error: 'Aucun dump disponible - connectez-vous à internet'
-    };
-  });
-
-  ipcMain.handle('dumps:writeAdminDump', async (_event, payload = {}) => {
-    try {
-      const q = await cloud.decrementQuota();
-      return { success: true, remaining: Number(q.remaining || 0), monthly_limit: Number(q.monthly_limit || 15), valid_until: q.valid_until || null };
-    } catch (e) {
-      return { success: false, message: String(e && e.message || e) };
-    }
-  });
-
-  ipcMain.handle('dumps:logCopyFail', async () => {
-    try {
-      await cloud.logCopyFail();
-      return { success: true };
-    } catch (e) {
-      return { success: false, message: String(e && e.message || e) };
-    }
-  });
-
-  ipcMain.handle('cloud:isOnline', async () => {
-    const online = await cloud.checkOnline();
-    return { ok: true, online, baseUrl: cloud.baseUrl };
-  });
-
-  // --- Stats (dashboard) ---
-  ipcMain.handle('stats:getStats', async () => {
-    // Minimal implementation: quota from cloud + placeholders for recent copies.
-    try {
-      let q = cloud.cachedQuota;
-      if (!q && cloud.token && cloud.role === 'client') {
-        try { q = await cloud.getQuota(); } catch (_) {}
-      }
-      const remaining = Number(q && q.remaining || 0);
-      const total = Math.max(1, Number(q && q.monthly_limit || 15));
-      const used = Math.max(0, total - remaining);
-      return {
-        ok: true,
-        stats: {
-          copiesThisMonth: used,
-          quotaRemaining: remaining,
-          quotaTotal: total
-        },
-        recent: []
-      };
-    } catch (e) {
-      return { ok: true, stats: { copiesThisMonth: 0, quotaRemaining: 0, quotaTotal: 0 }, recent: [] };
-    }
-  });
+  ipcMain.handle('dashboard:getStats', async () => ({ success: true, stats: { totalCopies: 0, successRate: 0 } }));
+  ipcMain.handle('dashboard:getRecentCopies', async () => ({ success: true, rows: [] }));
+  ipcMain.handle('matrix:sync', async () => ({ success: true }));
+  ipcMain.handle('matrix:readLog', async () => ({ success: true, rows: [] }));
+  ipcMain.handle('sites:getAll', async () => ({ success: true, sites: [] }));
+  ipcMain.handle('sites:create', async () => ({ success: true }));
 }
 
 module.exports = { registerHandlers };

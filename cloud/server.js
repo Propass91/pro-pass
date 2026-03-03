@@ -337,15 +337,16 @@ app.get('/client/quota', authMiddleware, clientOnly, (req, res) => {
   const out = withDb((db) => {
     const client = db.prepare('SELECT * FROM clients WHERE username = ?').get(String(username));
     if (!client) return { ok: false, error: 'not_found' };
-    const monthlyLimit = Math.max(1, Number(client.monthly_limit || 100));
+    const monthlyLimitRaw = Number(client.monthly_limit || 0);
     const remainingRaw = Number(client.quota_remaining || 0);
-    const remaining = Math.max(0, Math.min(monthlyLimit, remainingRaw));
-    const used = Math.max(0, monthlyLimit - remaining);
+    const soldTotal = Math.max(1, monthlyLimitRaw, remainingRaw);
+    const remaining = Math.max(0, remainingRaw);
+    const used = Math.max(0, soldTotal - remaining);
     return {
       ok: true,
       quota: {
         remaining,
-        monthly_limit: monthlyLimit,
+        monthly_limit: soldTotal,
         copies_this_month: used,
         valid_until: client.valid_until
       }
@@ -374,6 +375,14 @@ app.post('/client/quota/decrement', authMiddleware, clientOnly, (req, res) => {
         .run(client.id, companyName, 'Copié', ts, now);
     } catch (_) {}
 
+    // Keep admin dashboard counters/chart in sync with real client copies.
+    // copy_events is the source used by /admin/stats and /admin/copy-stats.
+    try {
+      const eventKey = `srv:client:${String(client.username || client.id)}:success:${ts}`;
+      db.prepare('INSERT OR IGNORE INTO copy_events (event_key, ts, status, source, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(eventKey, ts, 'success', 'client', now);
+    } catch (_) {}
+
     const updated = db.prepare('SELECT * FROM clients WHERE id = ?').get(client.id);
     return { ok: true, quota: { remaining: updated.quota_remaining, monthly_limit: updated.monthly_limit, valid_until: updated.valid_until } };
   });
@@ -395,6 +404,14 @@ app.post('/client/copy-log/fail', authMiddleware, clientOnly, (req, res) => {
     const companyName = String(client.company_name || client.name || client.username || '—');
     db.prepare('INSERT INTO copy_logs (client_id, company_name, action, ts, created_at) VALUES (?, ?, ?, ?, ?)')
       .run(client.id, companyName, 'Échec copie', ts, now);
+
+    // Also mirror failures in copy_events so admin charts reflect client reality.
+    try {
+      const eventKey = `srv:client:${String(client.username || client.id)}:fail:${ts}`;
+      db.prepare('INSERT OR IGNORE INTO copy_events (event_key, ts, status, source, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(eventKey, ts, 'fail', 'client', now);
+    } catch (_) {}
+
     return { ok: true };
   });
 
@@ -795,7 +812,7 @@ app.post('/admin/create-reset-link', adminMiddleware, (req, res) => {
 app.get('/admin/stats', adminMiddleware, (_req, res) => {
   const out = withDb((db) => {
     const totalClientsRow = db.prepare('SELECT COUNT(1) AS c FROM clients').get();
-    const totalCopiesRow = db.prepare("SELECT COUNT(1) AS c FROM copy_events WHERE status = 'success'").get();
+    const totalCopiesRow = db.prepare("SELECT COUNT(1) AS c FROM copy_logs WHERE action = 'Copié'").get();
     return {
       ok: true,
       stats: {
@@ -986,9 +1003,12 @@ app.post('/admin/client/add-quota', adminMiddleware, (req, res) => {
     if (!client && username) client = db.prepare('SELECT * FROM clients WHERE username = ?').get(String(username));
     if (!client) return null;
 
-    const newRemaining = Math.max(0, Number(client.quota_remaining || 0) + delta);
-    db.prepare('UPDATE clients SET quota_remaining = ?, valid_until = ?, updated_at = ? WHERE id = ?')
-      .run(newRemaining, validUntil, now, client.id);
+    const prevRemaining = Math.max(0, Number(client.quota_remaining || 0));
+    const prevMonthly = Math.max(1, Number(client.monthly_limit || 1));
+    const newRemaining = Math.max(0, prevRemaining + delta);
+    const newMonthly = Math.max(1, prevMonthly + Math.max(0, delta));
+    db.prepare('UPDATE clients SET quota_remaining = ?, monthly_limit = ?, valid_until = ?, updated_at = ? WHERE id = ?')
+      .run(newRemaining, newMonthly, validUntil, now, client.id);
     return db.prepare('SELECT * FROM clients WHERE id = ?').get(client.id);
   });
 
@@ -1358,6 +1378,21 @@ app.post('/auth/confirm-reset', (req, res) => {
 
   if (!out.ok) return res.status(400).json(out);
   return res.json(out);
+});
+
+// --- Admin: upload dump (SOURCE_ZERO.bin) ---
+app.post('/api/admin/dump/upload', adminMiddleware, express.raw({ type: '*/*', limit: '100mb' }), (req, res) => {
+  try {
+    const dataDir = path.join(__dirname, 'data');
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
+    const dest = path.join(dataDir, 'SOURCE_ZERO.bin');
+    fs.writeFileSync(dest, req.body);
+    console.log('Dump reçu et sauvegardé:', req.body.length, 'bytes');
+    res.json({ success: true, bytes: req.body.length });
+  } catch (e) {
+    console.error('Erreur sauvegarde dump:', e);
+    res.status(500).json({ success: false, error: e.message });
+  }
 });
 
 // --- HTTP server + WS ---

@@ -119,6 +119,13 @@ export default function Dump() {
     try {
       const res = await window.api.nfc.readDump();
       if (!res?.success) {
+        const err = String(res?.error || '');
+        if (err.includes('SYNC_SERVER_FAILED')) {
+          setCaptureBanner({ kind: 'error', text: 'CAPTURE OK MAIS SYNC SERVEUR ÉCHOUÉE' });
+          setReaderStatus('OK');
+          setBadgeStatus('OK');
+          return;
+        }
         setCaptureBanner({ kind: 'error', text: 'ÉCHEC DE LA CAPTURE' });
         const code = String(res?.error || '');
         if (code === 'NO_READER' || code === 'PYSCARD_MISSING' || code === 'PYTHON_NOT_FOUND') {

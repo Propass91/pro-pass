@@ -71,7 +71,7 @@ class CloudClient extends EventEmitter {
   async checkOnline() {
     try {
       const r = await fetchJson(`${this.baseUrl}/health`, { timeoutMs: 3500 });
-      return !!(r && r.ok);
+      return !!(r && (r.ok || r.status === "OK"));
     } catch (_) {
       return false;
     }

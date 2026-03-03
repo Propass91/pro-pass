@@ -1,13 +1,13 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const { initDatabase } = require('./database/database');
-const { setupIPCHandlers } = require('./ipc/handlers');
+const { registerHandlers } = require('./ipc/handlers');
 
 let mainWindow;
 
 async function createWindow() {
   await initDatabase();
-  setupIPCHandlers();
+  registerHandlers(ipcMain);
   
   mainWindow = new BrowserWindow({
     width: 1200,

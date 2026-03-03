@@ -1,79 +1,60 @@
-#!/usr/bin/env python3
-import argparse
-import binascii
-import json
+﻿from smartcard.System import readers
 import os
-import sys
-from pathlib import Path
 
+PASS_OMEGA  = [0xEF, 0x61, 0xA3, 0xD4, 0x8E, 0x2A]
+SOURCE_PATH = os.environ.get("PROPASS_SOURCE_PATH",
+              os.path.join(os.path.dirname(__file__), "..", "..", "VAULT", "SOURCE_ZERO.bin"))
 
-def _project_root() -> Path:
-    return Path(__file__).resolve().parent.parent.parent
+def main():
+    if not os.path.exists(SOURCE_PATH):
+        return print(f"[-] Erreur : {SOURCE_PATH} absent.")
 
+    r = readers()
+    if not r:
+        return print("[-] Materiel absent.")
 
-def _vault_dir() -> Path:
-    env = os.environ.get("PROPASS_VAULT_DIR")
-    if env:
-        return Path(env).expanduser().resolve()
-    return (_project_root() / "VAULT").resolve()
-
-
-def _in_path() -> Path:
-    env = os.environ.get("PROPASS_IN_PATH")
-    if env:
-        return Path(env).expanduser().resolve()
-    return _vault_dir() / "SOURCE_ZERO.bin"
-
-
-def _print_json(obj: dict) -> None:
-    sys.stdout.write(json.dumps(obj, ensure_ascii=False))
-    sys.stdout.write("\n")
-    sys.stdout.flush()
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description="PROPASS NFC write (Python engine)")
-    parser.add_argument("--vault", default=None, help="Override VAULT directory")
-    parser.add_argument("--in", dest="in_path", default=None, help="Override input bin path")
-    parser.add_argument("--hex", default=None, help="Provide dump as HEX (1024 bytes = 2048 hex)")
-    args = parser.parse_args()
-
-    if args.vault:
-        os.environ["PROPASS_VAULT_DIR"] = args.vault
-    if args.in_path:
-        os.environ["PROPASS_IN_PATH"] = args.in_path
-
-    vault = _vault_dir()
-    in_path = _in_path()
-
-    try:
-        vault.mkdir(parents=True, exist_ok=True)
-    except Exception:
-        pass
-
-    if args.hex:
-        hex_str = "".join(ch for ch in str(args.hex) if ch.lower() in "0123456789abcdef")
+    conn = r[0].createConnection()
+    # Fix protocole Gen2 Magic - T1 requis pour AUTH MIFARE
+    _ok = False
+    for _p in [2, 1, 3, 4, 65536]:
         try:
-            data = binascii.unhexlify(hex_str)
+            conn.connect(_p)
+            _ok = True
+            break
         except Exception:
-            _print_json({"success": False, "error": "INVALID_HEX"})
-            return 1
-        in_path.write_bytes(data)
+            try:
+                conn = r[0].createConnection()
+            except Exception:
+                pass
+    if not _ok:
+        return print("[-] Connexion lecteur impossible")
 
-    if not in_path.exists():
-        _print_json({"success": False, "error": "MISSING_INPUT", "in_path": str(in_path)})
-        return 1
+    with open(SOURCE_PATH, "rb") as f:
+        matrix = f.read()
 
-    # Paste your real write-to-card logic here.
-    _print_json({
-        "success": False,
-        "error": "NO_READER",
-        "message": "Python NFC write engine not implemented in this stub. Provide your existing write logic in backend/nfc/write.py",
-        "vault": str(vault),
-        "in_path": str(in_path)
-    })
-    return 2
+    print("[+] SYNC PRO ALPHA : Mise a jour Gen2 Magic (bloc 0 inclus)...")
 
+    for sector in range(16):
+        base_block = sector * 4
+        print(f"[*] Secteur {sector:02d} :", end=" ")
+
+        # Auth Cle B PASS_OMEGA
+        conn.transmit([0xFF, 0x82, 0x00, 0x01, 0x06] + PASS_OMEGA)
+        _, sw1, sw2 = conn.transmit([0xFF, 0x86, 0x00, 0x00, 0x05,
+                                     0x01, 0x00, base_block, 0x61, 0x01])
+        if sw1 == 0x90:
+            print("AUTH OK ->", end=" ")
+            for i in range(3):   # blocs 0, 1, 2 (pas le trailer)
+                block = base_block + i
+                # Gen2 Magic : bloc 0 inscriptible (UID cloneable) - PAS DE SKIP
+                data  = list(matrix[block * 16 : block * 16 + 16])
+                _, sw1_w, _ = conn.transmit([0xFF, 0xD6, 0x00, block, 16] + data)
+                print(f"B{block}:{'W' if sw1_w == 0x90 else 'X'}", end=" ")
+            print()
+        else:
+            print("ECHEC AUTH")
+
+    print("\n[V] SYNCHRONISATION TERMINEE.")
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()

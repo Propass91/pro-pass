@@ -147,6 +147,16 @@ export default function MainLayout({ user, onLogout }) {
     return `Validité : ${formatDdMm(start)} au ${formatDdMm(end)}`;
   }, [isClient, clientQuota]);
 
+  const clientMonthlyCounter = useMemo(() => {
+    if (!isClient) return '';
+    const remaining = Number(clientQuota && clientQuota.remaining);
+    const monthlyLimit = Number(clientQuota && clientQuota.monthly_limit);
+    if (!Number.isFinite(remaining) || !Number.isFinite(monthlyLimit) || monthlyLimit <= 0) {
+      return 'Copies mensuelles : —';
+    }
+    return `Copies mensuelles : ${Math.max(0, remaining)} / ${Math.max(1, monthlyLimit)}`;
+  }, [isClient, clientQuota]);
+
   return (
     <div className={`app-layout ${isClient ? 'theme-client' : 'theme-admin'}`}>
       {isAdmin ? (
@@ -175,6 +185,7 @@ export default function MainLayout({ user, onLogout }) {
             <div className="client-topbar-right">
               <div className="client-meta">
                 <span className="client-email">{clientEmail}</span>
+                <span className="client-validity">{clientMonthlyCounter}</span>
                 <span className="client-validity">{clientValidity}</span>
               </div>
               <button className="client-logout" onClick={onLogout} title="Déconnexion">

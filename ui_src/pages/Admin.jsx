@@ -363,7 +363,7 @@ function Admin({ user, onLogout, activePage, externalFilterSiteId, onExternalFil
               <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
                 <th style={{ padding: '10px 6px' }}>Client</th>
                 <th style={{ padding: '10px 6px' }}>Email</th>
-                <th style={{ padding: '10px 6px' }}>Quota</th>
+                <th style={{ padding: '10px 6px' }}>Quota mensuel</th>
                 <th style={{ padding: '10px 6px' }}>Validité</th>
                 <th style={{ padding: '10px 6px', width: 220 }}>Ajouter quota</th>
               </tr>

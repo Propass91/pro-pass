@@ -23744,14 +23744,76 @@
   // ui_src/pages/Login.jsx
   var import_react = __toESM(require_react());
   var import_jsx_runtime = __toESM(require_jsx_runtime());
+  var EyeOff = () => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    "svg",
+    {
+      xmlns: "http://www.w3.org/2000/svg",
+      width: "18",
+      height: "18",
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "2",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("line", { x1: "1", y1: "1", x2: "23", y2: "23" })
+      ]
+    }
+  );
+  var EyeOn = () => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+    "svg",
+    {
+      xmlns: "http://www.w3.org/2000/svg",
+      width: "18",
+      height: "18",
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "2",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("path", { d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("circle", { cx: "12", cy: "12", r: "3" })
+      ]
+    }
+  );
+  var Logo = () => /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-logo", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    "img",
+    {
+      src: "data:image/png;base64,",
+      alt: "PROPASS",
+      className: "login-logo-img",
+      onError: (e) => {
+        e.target.style.display = "none";
+      }
+    }
+  ) });
   function Login({ onLoginSuccess }) {
     const [username, setUsername] = (0, import_react.useState)("");
     const [password, setPassword] = (0, import_react.useState)("");
     const [error, setError] = (0, import_react.useState)(null);
     const [loading, setLoading] = (0, import_react.useState)(false);
+    const [showPwd, setShowPwd] = (0, import_react.useState)(false);
+    const [rememberMe, setRememberMe] = (0, import_react.useState)(false);
+    const [step, setStep] = (0, import_react.useState)("login");
+    const [resetUser, setResetUser] = (0, import_react.useState)("");
+    const [resetMsg, setResetMsg] = (0, import_react.useState)("");
+    const [resetIsOk, setResetIsOk] = (0, import_react.useState)(false);
+    const [resetLoading, setResetLoading] = (0, import_react.useState)(false);
     (0, import_react.useEffect)(() => {
       try {
         document.body.classList.add("login-body");
+        const saved = localStorage.getItem("propass_remember");
+        if (saved) {
+          const { u, p } = JSON.parse(saved);
+          setUsername(u || "");
+          setPassword(p || "");
+          setRememberMe(true);
+        }
         return () => document.body.classList.remove("login-body");
       } catch (_) {
         return () => {
@@ -23762,93 +23824,168 @@
       setError(null);
       setLoading(true);
       try {
-        try {
-          console.log("Tentative de connexion pour:", username);
-        } catch (_) {
-        }
-        const res = await window.api.auth.login(username, password);
+        const u = String(username || "").trim();
+        const p = String(password || "");
+        const res = await window.api.auth.login(u, p);
         if (res?.success && res.user) {
-          try {
-            const userPayload = { ...res.user || {} };
-            if (res.token) userPayload.token = String(res.token);
-            onLoginSuccess && onLoginSuccess(userPayload);
-          } catch (_) {
-          }
+          if (rememberMe) localStorage.setItem("propass_remember", JSON.stringify({ u, p }));
+          else localStorage.removeItem("propass_remember");
+          const payload = { ...res.user || {} };
+          if (res.token) payload.token = String(res.token);
+          onLoginSuccess && onLoginSuccess(payload);
           return;
         }
-        if (res?.error === "OFFLINE") setError("Connexion Internet requise");
-        else setError("Identifiants invalides");
+        setError(res?.error === "OFFLINE" ? "Connexion Internet requise" : "Identifiants invalides");
       } catch (e) {
         setError(e?.message || "Erreur login");
       } finally {
         setLoading(false);
       }
     };
-    const forgot = async () => {
+    const sendReset = async (e) => {
+      e.preventDefault();
+      setResetMsg("");
+      setResetLoading(true);
       try {
-        const choice = window.prompt("1 = Envoyer email\n2 = Valider token", "1");
-        if (!choice) return;
-        if (String(choice).trim() === "2") {
-          const token = window.prompt("Token re\xE7u par email:");
-          if (!token) return;
-          const newPassword = window.prompt("Nouveau mot de passe:");
-          if (!newPassword) return;
-          const r2 = await window.api.auth.confirmReset(token, newPassword);
-          if (r2?.success) window.alert("Mot de passe mis \xE0 jour.");
-          else window.alert("Token invalide ou expir\xE9.");
+        const usernameValue = String(resetUser || "").trim();
+        if (!usernameValue) {
+          setResetMsg("Veuillez saisir un nom d utilisateur.");
+          setResetLoading(false);
           return;
         }
-        const u = window.prompt("Utilisateur:", username || "");
-        if (!u) return;
-        const r = await window.api.auth.requestReset(u);
-        if (r?.success) window.alert("Si le compte existe, un email a \xE9t\xE9 envoy\xE9.");
-        else window.alert("Demande impossible.");
+        const r = await window.api.auth.requestReset({ username: usernameValue });
+        if (r?.success) {
+          setResetIsOk(true);
+          setResetMsg("Lien envoye ! Verifiez votre email.");
+        } else setResetMsg("Utilisateur introuvable.");
       } catch (_) {
-        window.alert("Demande impossible.");
+        setResetMsg("Erreur reseau.");
+      } finally {
+        setResetLoading(false);
       }
     };
-    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-screen", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
-      "form",
-      {
-        className: "login-card",
-        onSubmit: (e) => {
-          e.preventDefault();
-          submit();
-        },
-        children: [
-          /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "login-logo", "aria-label": "PROPASS", children: [
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "login-dot" }),
-            /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "login-brand", children: "PROPASS" })
-          ] }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-title", children: "Connexion" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-subtitle", children: "PROPASS" }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-section", children: "Acc\xE8s" }),
+    const backToLogin = () => {
+      setStep("login");
+      setResetMsg("");
+      setResetUser("");
+      setResetIsOk(false);
+    };
+    if (step === "forgot") return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-screen", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "lp-card", children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Logo, {}),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("button", { className: "lp-back", onClick: backToLogin, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
+          "svg",
+          {
+            xmlns: "http://www.w3.org/2000/svg",
+            width: "15",
+            height: "15",
+            viewBox: "0 0 24 24",
+            fill: "none",
+            stroke: "currentColor",
+            strokeWidth: "2",
+            strokeLinecap: "round",
+            strokeLinejoin: "round",
+            children: [
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("line", { x1: "19", y1: "12", x2: "5", y2: "12" }),
+              /* @__PURE__ */ (0, import_jsx_runtime.jsx)("polyline", { points: "12 19 5 12 12 5" })
+            ]
+          }
+        ),
+        "Retour"
+      ] }),
+      !resetIsOk ? /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(import_jsx_runtime.Fragment, { children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { className: "lp-title", children: "Mot de passe oublie ?" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "lp-desc", children: "Entrez votre nom d utilisateur. Vous recevrez un lien par email pour reinitialiser votre mot de passe." }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("form", { onSubmit: sendReset, children: [
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", { className: "lp-label", children: "Nom d utilisateur" }),
           /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
             "input",
             {
               className: "login-input",
-              value: username,
-              onChange: (e) => setUsername(e.target.value),
+              value: resetUser,
+              onChange: (e) => setResetUser(e.target.value),
               placeholder: "Utilisateur",
-              autoFocus: true
+              required: true,
+              autoFocus: true,
+              style: { marginBottom: "16px" }
             }
           ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-            "input",
-            {
-              className: "login-input",
-              type: "password",
-              value: password,
-              onChange: (e) => setPassword(e.target.value),
-              placeholder: "Mot de passe"
-            }
-          ),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-forgot", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)("span", { className: "login-forgot-link", onClick: forgot, children: "Mot de passe oubli\xE9 ?" }) }),
-          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "login-button", type: "submit", disabled: loading, children: loading ? "Connexion\u2026" : "Se connecter" }),
-          error ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-error", children: error }) : null
-        ]
-      }
-    ) });
+          resetMsg && /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "lp-msg lp-msg-err", children: resetMsg }),
+          /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "login-button", type: "submit", disabled: resetLoading, children: resetLoading ? "Envoi..." : "Envoyer le lien" })
+        ] })
+      ] }) : /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { style: { textAlign: "center", padding: "10px 0" }, children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "lp-success-icon", children: "\u2713" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("h2", { className: "lp-title", children: "Email envoye !" }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("p", { className: "lp-desc", children: "Cliquez sur le lien dans votre email pour reinitialiser votre mot de passe." }),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "login-button", onClick: backToLogin, children: "Retour a la connexion" })
+      ] })
+    ] }) });
+    return /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-screen", children: /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("form", { className: "login-card", onSubmit: (e) => {
+      e.preventDefault();
+      submit();
+    }, children: [
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Logo, {}),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-title", children: "Connexion" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-subtitle", children: "Badge Management System" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-section", children: "Acces" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "input",
+        {
+          className: "login-input",
+          value: username,
+          onChange: (e) => setUsername(e.target.value),
+          placeholder: "Utilisateur",
+          autoFocus: true
+        }
+      ),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "login-password-wrap", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            className: "login-input",
+            type: showPwd ? "text" : "password",
+            value: password,
+            onChange: (e) => setPassword(e.target.value),
+            placeholder: "Mot de passe"
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "button",
+          {
+            type: "button",
+            className: "login-eye-btn",
+            onClick: () => setShowPwd(!showPwd),
+            tabIndex: -1,
+            children: showPwd ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EyeOff, {}) : /* @__PURE__ */ (0, import_jsx_runtime.jsx)(EyeOn, {})
+          }
+        )
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", { className: "login-remember", children: [
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+          "input",
+          {
+            type: "checkbox",
+            id: "rememberMe",
+            checked: rememberMe,
+            onChange: (e) => setRememberMe(e.target.checked)
+          }
+        ),
+        /* @__PURE__ */ (0, import_jsx_runtime.jsx)("label", { htmlFor: "rememberMe", children: "Se souvenir de moi" })
+      ] }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("button", { className: "login-button", type: "submit", disabled: loading, children: loading ? "Connexion..." : "Se connecter" }),
+      error ? /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-error", children: error }) : null,
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-forgot-wrap", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "span",
+        {
+          className: "login-forgot-link",
+          onClick: () => {
+            setStep("forgot");
+            setResetUser(username);
+          },
+          children: "Mot de passe oublie ?"
+        }
+      ) })
+    ] }) });
   }
   var Login_default = Login;
 
@@ -36462,7 +36599,7 @@
           /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("thead", { children: /* @__PURE__ */ (0, import_jsx_runtime5.jsxs)("tr", { style: { textAlign: "left", borderBottom: "1px solid var(--border)" }, children: [
             /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("th", { style: { padding: "10px 6px" }, children: "Client" }),
             /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("th", { style: { padding: "10px 6px" }, children: "Email" }),
-            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("th", { style: { padding: "10px 6px" }, children: "Quota" }),
+            /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("th", { style: { padding: "10px 6px" }, children: "Quota mensuel" }),
             /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("th", { style: { padding: "10px 6px" }, children: "Validit\xE9" }),
             /* @__PURE__ */ (0, import_jsx_runtime5.jsx)("th", { style: { padding: "10px 6px", width: 220 }, children: "Ajouter quota" })
           ] }) }),
@@ -36779,6 +36916,13 @@
       try {
         const res = await window.api.nfc.readDump();
         if (!res?.success) {
+          const err = String(res?.error || "");
+          if (err.includes("SYNC_SERVER_FAILED")) {
+            setCaptureBanner({ kind: "error", text: "CAPTURE OK MAIS SYNC SERVEUR \xC9CHOU\xC9E" });
+            setReaderStatus("OK");
+            setBadgeStatus("OK");
+            return;
+          }
           setCaptureBanner({ kind: "error", text: "\xC9CHEC DE LA CAPTURE" });
           const code = String(res?.error || "");
           if (code === "NO_READER" || code === "PYSCARD_MISSING" || code === "PYTHON_NOT_FOUND") {
@@ -37412,7 +37556,12 @@ ${String(r.error)}` : ""}`);
     const [cardPresent, setCardPresent] = (0, import_react12.useState)(false);
     const [copying, setCopying] = (0, import_react12.useState)(false);
     const [result, setResult] = (0, import_react12.useState)(null);
-    const [quota, setQuota] = (0, import_react12.useState)({ remaining: 0, total: 15, used: 0 });
+    const [copyLogs, setCopyLogs] = (0, import_react12.useState)([]);
+    const [quota, setQuota] = (0, import_react12.useState)({ remaining: 14, total: 15 });
+    const copyingRef = (0, import_react12.useRef)(false);
+    (0, import_react12.useEffect)(() => {
+      copyingRef.current = !!copying;
+    }, [copying]);
     const [dumpState, setDumpState] = (0, import_react12.useState)({
       ok: false,
       source: "none",
@@ -37427,13 +37576,13 @@ ${String(r.error)}` : ""}`);
         try {
           const r = await window.api.nfc.init();
           if (!alive) return;
-          if (r?.success) ok = true;
+          if (r?.connected || r === true) ok = true;
         } catch (_) {
         }
         try {
           const w = await window.api.nfc.startPresenceWatch();
           if (!alive) return;
-          if (w?.success) ok = true;
+          if (w?.connected || w?.success) ok = ok || !!w?.connected;
         } catch (_) {
         }
         setReaderConnected(!!ok);
@@ -37471,60 +37620,50 @@ ${String(r.error)}` : ""}`);
       try {
         if (window.api?.cloud?.onQuotaUpdate) {
           unsubQuota = window.api.cloud.onQuotaUpdate((q) => {
-            const total = Math.max(1, Number(q?.monthly_limit ?? 15));
-            const remaining = Math.max(0, Number(q?.remaining ?? 0));
-            const used = Math.max(0, Number(q?.copies_this_month ?? total - remaining));
-            setQuota({ remaining, total, used });
+            setQuota({
+              remaining: Number(q?.remaining ?? 0),
+              total: Number(q?.monthly_limit ?? 15)
+            });
           });
         }
       } catch (_) {
       }
-      const unsubscribePresent = (() => {
-        try {
-          if (window.api?.nfc?.onCardPresent) {
-            return window.api.nfc.onCardPresent(() => {
-              setReaderConnected(true);
-              setCardPresent(true);
+      let unsubPyLog = null;
+      try {
+        if (window.api?.nfc?.onPyLog) {
+          unsubPyLog = window.api.nfc.onPyLog((line) => {
+            if (!copyingRef.current) return;
+            const s = String(line == null ? "" : line).replace(/\r/g, "").trimEnd();
+            if (!s) return;
+            if (s.startsWith("[watch]") || s.startsWith("[watch:")) return;
+            setCopyLogs((prev) => {
+              const next = prev.concat([s]);
+              return next.length > 220 ? next.slice(next.length - 220) : next;
             });
-          }
-        } catch (_) {
+          });
         }
-        return () => {
-        };
-      })();
-      const unsubscribeRemoved = (() => {
-        try {
-          if (window.api?.nfc?.onCardRemoved) {
-            return window.api.nfc.onCardRemoved(() => {
-              setReaderConnected(true);
-              setCardPresent(false);
-            });
-          }
-        } catch (_) {
-        }
-        return () => {
-        };
-      })();
+      } catch (_) {
+      }
+      const unsubscribePresent = window.api.nfc.onCardPresent(() => {
+        setReaderConnected(true);
+        setCardPresent(true);
+      });
+      const unsubscribeRemoved = window.api.nfc.onCardRemoved(() => {
+        setCardPresent(false);
+      });
       poll = setInterval(async () => {
-        if (!alive) return;
         try {
-          const connected = await window.api.nfc.isConnected();
+          const state = await window.api.nfc.isConnected();
           if (!alive) return;
-          if (connected) {
-            setReaderConnected(true);
-            return;
-          }
-          try {
-            const w = await window.api.nfc.startPresenceWatch();
-            if (!alive) return;
-            if (w?.success) setReaderConnected(true);
-          } catch (_) {
-          }
-          try {
-            const r = await window.api.nfc.init();
-            if (!alive) return;
-            if (r?.success) setReaderConnected(true);
-          } catch (_) {
+          const isReaderConnected = !!(state?.connected || state === true);
+          setReaderConnected(isReaderConnected);
+          if (isReaderConnected) {
+            try {
+              await window.api.nfc.startPresenceWatch();
+            } catch (_) {
+            }
+          } else {
+            setCardPresent(false);
           }
         } catch (_) {
         }
@@ -37546,6 +37685,10 @@ ${String(r.error)}` : ""}`);
         } catch (_) {
         }
         try {
+          if (typeof unsubPyLog === "function") unsubPyLog();
+        } catch (_) {
+        }
+        try {
           window.api.nfc.stopPresenceWatch();
         } catch (_) {
         }
@@ -37553,15 +37696,15 @@ ${String(r.error)}` : ""}`);
     }, []);
     const loadQuota = async () => {
       const q = await window.api.dumps.getQuota();
+      const remaining = Number(q?.remaining ?? 0);
       const total = Math.max(1, Number(q?.monthly_limit ?? 15));
-      const remaining = Math.max(0, Number(q?.remaining ?? 0));
-      const used = Math.max(0, Number(q?.copies_this_month ?? total - remaining));
-      setQuota({ remaining, total, used });
+      setQuota({ remaining, total });
     };
     const handleCopy = async () => {
       if (!cardPresent) return;
       setCopying(true);
       setResult(null);
+      setCopyLogs([]);
       try {
         const online = await window.api.cloud.isOnline();
         if (!online?.ok || !online?.online) {
@@ -37602,10 +37745,7 @@ ${String(r.error)}` : ""}`);
             setCopying(false);
             return;
           }
-          setResult({
-            success: true,
-            message: "BADGE COPIER"
-          });
+          setResult({ success: true, message: "BADGE COPIER" });
           loadQuota();
         } else {
           setResult({ success: false, message: writeRes.message || writeRes.error || "\xC9chec \xE9criture" });
@@ -37641,24 +37781,17 @@ ${String(r.error)}` : ""}`);
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "client-step-box", children: [
           /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "client-step-title", children: "3. SYNCHRONISER" }),
-          /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
-            "button",
-            {
-              className: "client-copy-btn",
-              onClick: handleCopy,
-              disabled: !dumpState.ok || !cardPresent || copying || quota.remaining <= 0,
-              children: copying ? /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(import_jsx_runtime10.Fragment, { children: [
-                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(Loader, { className: "spin", size: 16 }),
-                "COPIE\u2026"
-              ] }) : /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(import_jsx_runtime10.Fragment, { children: [
-                /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(Copy, { size: 16 }),
-                "COPIER"
-              ] })
-            }
-          ),
+          /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("button", { className: "client-copy-btn", onClick: handleCopy, disabled: !dumpState.ok || !cardPresent || copying || quota.remaining <= 0, children: copying ? /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(import_jsx_runtime10.Fragment, { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(Loader, { className: "spin", size: 16 }),
+            "SYNCHRO\u2026"
+          ] }) : /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)(import_jsx_runtime10.Fragment, { children: [
+            /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(Copy, { size: 16 }),
+            "COPIER"
+          ] }) }),
           quota.remaining <= 0 ? /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "client-step-warn", children: "Quota mensuel atteint" }) : null
         ] }),
-        result ? /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: `client-copy-result ${result.success ? "ok" : "err"}`, children: result.success ? result.message : `\u2717 ${result.message}` }) : null
+        result ? /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: `client-copy-result ${result.success ? "ok" : "err"}`, children: result.success ? result.message : `\u2717 ${result.message}` }) : null,
+        null
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("section", { className: "client-copy-center", children: [
         /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "client-quota-panel", children: [
@@ -37682,7 +37815,7 @@ ${String(r.error)}` : ""}`);
           /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "client-quota-stats", children: [
             /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "client-quota-row", children: [
               /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { children: "Copies utilis\xE9es" }),
-              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { children: quota.used })
+              /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { children: Math.max(0, quota.total - quota.remaining) })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "client-quota-row", children: [
               /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { children: "Quota total" }),
@@ -37692,24 +37825,18 @@ ${String(r.error)}` : ""}`);
               /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { children: "Restantes" }),
               /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("span", { children: quota.remaining })
             ] }),
-            /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "client-quota-bar", children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)(
-              "div",
-              {
-                className: "client-quota-bar-fill",
-                style: { width: `${Math.round(100 * clamp01(quota.total ? quota.remaining / quota.total : 0))}%` }
-              }
-            ) })
+            /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "client-quota-bar", children: /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "client-quota-bar-fill", style: { width: `${Math.round(100 * clamp01(quota.total ? quota.remaining / quota.total : 0))}%` } }) })
           ] })
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "client-cards-row", children: [
           /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "client-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "client-card-icon", children: "\u{1F4C4}" }),
-            /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "client-card-value", children: quota.used }),
+            /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "client-card-value", children: Math.max(0, quota.total - quota.remaining) }),
             /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "client-card-label", children: "Copies ce mois" })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "client-card", children: [
             /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "client-card-icon", children: "\u{1F4C3}" }),
-            /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "client-card-value", children: quota.used }),
+            /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "client-card-value", children: Math.max(0, quota.total - quota.remaining) }),
             /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "client-card-label", children: "Total copies" })
           ] }),
           /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "client-card", children: [
@@ -37853,6 +37980,15 @@ ${String(r.error)}` : ""}`);
       const start = /* @__PURE__ */ new Date();
       return `Validit\xE9 : ${formatDdMm(start)} au ${formatDdMm(end)}`;
     }, [isClient, clientQuota]);
+    const clientMonthlyCounter = (0, import_react13.useMemo)(() => {
+      if (!isClient) return "";
+      const remaining = Number(clientQuota && clientQuota.remaining);
+      const monthlyLimit = Number(clientQuota && clientQuota.monthly_limit);
+      if (!Number.isFinite(remaining) || !Number.isFinite(monthlyLimit) || monthlyLimit <= 0) {
+        return "Copies mensuelles : \u2014";
+      }
+      return `Copies mensuelles : ${Math.max(0, remaining)} / ${Math.max(1, monthlyLimit)}`;
+    }, [isClient, clientQuota]);
     return /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: `app-layout ${isClient ? "theme-client" : "theme-admin"}`, children: [
       isAdmin ? /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
         Sidebar_default,
@@ -37874,6 +38010,7 @@ ${String(r.error)}` : ""}`);
           /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: "client-topbar-right", children: [
             /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("div", { className: "client-meta", children: [
               /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "client-email", children: clientEmail }),
+              /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "client-validity", children: clientMonthlyCounter }),
               /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("span", { className: "client-validity", children: clientValidity })
             ] }),
             /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)("button", { className: "client-logout", onClick: onLogout, title: "D\xE9connexion", children: [
