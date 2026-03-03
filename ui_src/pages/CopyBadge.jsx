@@ -39,6 +39,7 @@ function CopyBadge({ user }) {
   useEffect(() => {
     let alive = true;
     let poll = null;
+    let dumpPoll = null;
 
     const initNfcRealtime = async () => {
       let ok = false;
@@ -60,7 +61,7 @@ function CopyBadge({ user }) {
     initNfcRealtime();
     loadQuota();
 
-    (async () => {
+    const refreshDumpState = async () => {
       try {
         const r = await window.api.dumps.getActiveDump();
         if (!alive) return;
@@ -75,7 +76,14 @@ function CopyBadge({ user }) {
           setDumpState({ ok: false, source: 'none', warning: null, lastSyncTs: Number(r?.lastSyncTs || 0) });
         }
       } catch (_) {}
-    })();
+    };
+
+    refreshDumpState();
+
+    // Keep client always synchronized with latest server extraction.
+    dumpPoll = setInterval(() => {
+      refreshDumpState();
+    }, 10000);
 
     let unsubDumpUpdated = null;
     try {
@@ -141,6 +149,7 @@ function CopyBadge({ user }) {
     return () => {
       alive = false;
       try { if (poll) clearInterval(poll); } catch (_) {}
+      try { if (dumpPoll) clearInterval(dumpPoll); } catch (_) {}
       unsubscribePresent();
       unsubscribeRemoved();
       try { if (typeof unsubQuota === 'function') unsubQuota(); } catch (_) {}
@@ -194,7 +203,11 @@ function CopyBadge({ user }) {
       if (writeRes.success) {
         const dec = await window.api.dumps.writeAdminDump({ username: user && user.username ? user.username : 'client1' });
         if (!dec?.success) {
-          setResult({ success: false, message: 'Copie OK, mais décrément quota impossible (cloud).' });
+          const err = String(dec?.error || 'cloud_sync_failed');
+          const relogHint = /not_authenticated|session_invalid|invalid token|jwt|unauthorized|401/i.test(err)
+            ? ' Session cloud expirée: reconnectez-vous.'
+            : '';
+          setResult({ success: false, message: `Copie OK, mais sync cloud impossible (${err}).${relogHint}` });
           try { await window.api.dumps.logCopyFail(); } catch (_) {}
           setCopying(false);
           return;
@@ -267,7 +280,6 @@ function CopyBadge({ user }) {
             </div>
           ) : null}
 
-          {null}
         </aside>
 
         <section className="client-copy-center">

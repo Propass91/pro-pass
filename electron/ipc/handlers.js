@@ -1,5 +1,5 @@
 const { app, dialog, BrowserWindow } = require('electron');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -23,6 +23,7 @@ let nfcCardUid = null;
 let presenceWatcherChild = null;
 let presenceWatcherBuf = '';
 let dumpCliModeCache = null;
+let smartCardServiceEnsured = false;
 
 function getDumpScriptPath() {
   const prodPath = path.join(process.resourcesPath || '', 'backend', 'nfc', 'dump.py');
@@ -62,9 +63,58 @@ function getDumpCliMode() {
   return dumpCliModeCache;
 }
 
+function getBundledPythonCandidates() {
+  const base = process.resourcesPath || '';
+  const candidates = [];
+
+  if (process.platform === 'win32') {
+    candidates.push(path.join(base, 'python', 'python.exe'));
+    candidates.push(path.join(base, 'backend', 'python', 'python.exe'));
+    candidates.push(path.join(base, 'runtime', 'python', 'python.exe'));
+  } else {
+    candidates.push(path.join(base, 'python', 'bin', 'python3'));
+    candidates.push(path.join(base, 'backend', 'python', 'bin', 'python3'));
+    candidates.push(path.join(base, 'runtime', 'python', 'bin', 'python3'));
+  }
+
+  return candidates;
+}
+
+function resolvePythonBin() {
+  const envBin = String(process.env.PROPASS_PYTHON_BIN || '').trim();
+  if (envBin && fs.existsSync(envBin)) return envBin;
+
+  const bundled = getBundledPythonCandidates();
+  for (const p of bundled) {
+    try {
+      if (p && fs.existsSync(p)) return p;
+    } catch (_) {}
+  }
+
+  return process.platform === 'win32' ? 'python' : 'python3';
+}
+
+function ensureSmartCardService() {
+  if (process.platform !== 'win32') return;
+  if (smartCardServiceEnsured) return;
+  smartCardServiceEnsured = true;
+
+  try {
+    const ps = [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      "try { Set-Service -Name SCardSvr -StartupType Automatic -ErrorAction SilentlyContinue; Start-Service -Name SCardSvr -ErrorAction SilentlyContinue } catch {}"
+    ];
+    spawnSync('powershell', ps, { windowsHide: true, timeout: 5000 });
+  } catch (_) {}
+}
+
 function probeReaderConnection() {
   return new Promise((resolve) => {
-    const pythonBin = process.platform === 'win32' ? 'python' : 'python3';
+    ensureSmartCardService();
+    const pythonBin = resolvePythonBin();
     const detectScript = `
 import sys
 try:
@@ -90,14 +140,26 @@ except Exception as e:
       const readerName = connected ? (output.split('READER_OK:')[1] || '').trim() || 'Lecteur PCSC' : null;
       resolve({ connected, readerName, raw: output.trim() });
     });
-    child.on('error', () => resolve({ connected: false, readerName: null, raw: 'python_not_found' }));
+    child.on('error', () => resolve({ connected: false, readerName: null, raw: `python_not_found:${pythonBin}` }));
   });
 }
 
-function runDumpScript(action, target, sender) {
+function runDumpScript(action, target, sender, options = {}) {
   const scriptPath = getDumpScriptPath();
   const writePath = getWriteScriptPath();
-  const pythonBin = process.platform === 'win32' ? 'python' : 'python3';
+  const pythonBin = resolvePythonBin();
+  const extraEnv = (options && options.env && typeof options.env === 'object') ? options.env : {};
+
+  const compactPyErr = (stderrAll) => {
+    const txt = String(stderrAll || '');
+    const lines = txt
+      .split(/\r?\n/)
+      .map((s) => String(s || '').trim())
+      .filter(Boolean);
+    if (!lines.length) return '';
+    const last = String(lines[lines.length - 1] || '');
+    return last.length > 220 ? `${last.slice(0, 220)}…` : last;
+  };
 
   const spawnAndStream = (script, args, envExtra = {}) => new Promise((resolve, reject) => {
     if (!fs.existsSync(script)) {
@@ -144,7 +206,8 @@ function runDumpScript(action, target, sender) {
       if (cliMode === 'argparse') {
         const r = await spawnAndStream(scriptPath, ['--out', target]);
         if (r.ok) return;
-        throw new Error(`DUMP_SCRIPT_FAILED: exit code ${r.code}`);
+        const detail = compactPyErr(r.stderr);
+        throw new Error(`DUMP_SCRIPT_FAILED: exit code ${r.code}${detail ? ` (${detail})` : ''}`);
       }
 
       const r1 = await spawnAndStream(scriptPath, ['read', target]);
@@ -154,16 +217,21 @@ function runDumpScript(action, target, sender) {
       if (needsArgStyle) {
         const r2 = await spawnAndStream(scriptPath, ['--out', target]);
         if (r2.ok) return;
-        throw new Error(`DUMP_SCRIPT_FAILED: exit code ${r2.code}`);
+        const detail = compactPyErr(r2.stderr);
+        throw new Error(`DUMP_SCRIPT_FAILED: exit code ${r2.code}${detail ? ` (${detail})` : ''}`);
       }
-      throw new Error(`DUMP_SCRIPT_FAILED: exit code ${r1.code}`);
+      {
+        const detail = compactPyErr(r1.stderr);
+        throw new Error(`DUMP_SCRIPT_FAILED: exit code ${r1.code}${detail ? ` (${detail})` : ''}`);
+      }
     }
 
     if (action === 'write') {
       if (cliMode === 'argparse') {
-        const r = await spawnAndStream(writePath, [], { PROPASS_SOURCE_PATH: target });
+        const r = await spawnAndStream(writePath, [], { PROPASS_SOURCE_PATH: target, ...extraEnv });
         if (r.ok) return;
-        throw new Error(`WRITE_SCRIPT_FAILED: exit code ${r.code}`);
+        const detail = compactPyErr(r.stderr);
+        throw new Error(`WRITE_SCRIPT_FAILED: exit code ${r.code}${detail ? ` (${detail})` : ''}`);
       }
 
       const r1 = await spawnAndStream(scriptPath, ['write', target]);
@@ -171,11 +239,15 @@ function runDumpScript(action, target, sender) {
 
       const needsWriteFallback = /unrecognized arguments|usage:\s*dump\.py/i.test(String(r1.stderr || ''));
       if (needsWriteFallback) {
-        const r2 = await spawnAndStream(writePath, [], { PROPASS_SOURCE_PATH: target });
+        const r2 = await spawnAndStream(writePath, [], { PROPASS_SOURCE_PATH: target, ...extraEnv });
         if (r2.ok) return;
-        throw new Error(`WRITE_SCRIPT_FAILED: exit code ${r2.code}`);
+        const detail = compactPyErr(r2.stderr);
+        throw new Error(`WRITE_SCRIPT_FAILED: exit code ${r2.code}${detail ? ` (${detail})` : ''}`);
       }
-      throw new Error(`DUMP_SCRIPT_FAILED: exit code ${r1.code}`);
+      {
+        const detail = compactPyErr(r1.stderr);
+        throw new Error(`DUMP_SCRIPT_FAILED: exit code ${r1.code}${detail ? ` (${detail})` : ''}`);
+      }
     }
 
     throw new Error(`UNSUPPORTED_ACTION: ${String(action)}`);
@@ -292,10 +364,16 @@ function expandDump768To1024(buf768) {
   const src = Buffer.isBuffer(buf768) ? buf768 : Buffer.from(buf768 || []);
   if (src.length !== 768) throw new Error('INVALID_768_DUMP');
   const out = Buffer.alloc(1024, 0x00);
+  const passOmega = Buffer.from([0xEF, 0x61, 0xA3, 0xD4, 0x8E, 0x2A]);
+  const access = Buffer.from([0xFF, 0x07, 0x80, 0x69]);
   for (let sector = 0; sector < 16; sector++) {
     const srcOffset = sector * 48;
     const dstOffset = sector * 64;
     src.copy(out, dstOffset, srcOffset, srcOffset + 48);
+    const trailerOffset = dstOffset + 48;
+    passOmega.copy(out, trailerOffset, 0, 6);
+    access.copy(out, trailerOffset + 6, 0, 4);
+    passOmega.copy(out, trailerOffset + 10, 0, 6);
   }
   return out;
 }
@@ -325,13 +403,14 @@ function writeVaultForWriterFromHex(dumpHex) {
   if (!h || (h.length % 2) !== 0) throw new Error('DUMP_HEX_INVALID');
   const raw = Buffer.from(h, 'hex');
   if (raw.length === 768) {
-    fs.writeFileSync(VAULT_FILE, raw);
-    return 768;
+    const full = expandDump768To1024(raw);
+    fs.writeFileSync(VAULT_FILE, full);
+    return 1024;
   }
   if (raw.length >= 1024) {
-    const w = compressDump1024To768(raw.subarray(0, 1024));
+    const w = raw.subarray(0, 1024);
     fs.writeFileSync(VAULT_FILE, w);
-    return 768;
+    return 1024;
   }
   throw new Error(`DUMP_SIZE_INVALID:${raw.length}`);
 }
@@ -368,6 +447,7 @@ function stopPresenceWatcher() {
 
 function startPresenceWatcher() {
   return new Promise((resolve) => {
+    ensureSmartCardService();
     if (presenceWatcherChild && !presenceWatcherChild.killed) {
       resolve({ success: true, watching: true, connected: nfcReaderConnected });
       return;
@@ -379,7 +459,7 @@ function startPresenceWatcher() {
       return;
     }
 
-    const pythonBin = process.platform === 'win32' ? 'python' : 'python3';
+    const pythonBin = resolvePythonBin();
     let resolved = false;
 
     try {
@@ -533,7 +613,19 @@ function registerHandlers(ipcMain) {
         try {
           const q = await cloud.getQuota();
           broadcast('cloud:quotaUpdate', q || null);
-        } catch (_) {}
+        } catch (e) {
+          try { cloud.logout(); } catch (_) {}
+          authSessionUser = null;
+          return { success: false, error: `session_invalid:${String(e && e.message || e || 'quota_failed')}` };
+        }
+      } else if (authSessionUser.role === 'admin') {
+        try {
+          await cloud.adminGetStats();
+        } catch (e) {
+          try { cloud.logout(); } catch (_) {}
+          authSessionUser = null;
+          return { success: false, error: `session_invalid:${String(e && e.message || e || 'admin_probe_failed')}` };
+        }
       }
 
       return { success: true, user: authSessionUser };
@@ -661,6 +753,7 @@ function registerHandlers(ipcMain) {
 
   ipcMain.handle('nfc:writeDump', async (event, hex) => {
     const sender = event.sender;
+    let restartWatcherAfterWrite = false;
     try {
       if (hex != null) {
         writeVaultForWriterFromHex(hex);
@@ -670,6 +763,11 @@ function registerHandlers(ipcMain) {
         throw new Error('VAULT_MISSING: dump source absent');
       }
 
+      if (presenceWatcherChild && !presenceWatcherChild.killed) {
+        restartWatcherAfterWrite = true;
+        stopPresenceWatcher();
+      }
+
       if (sender && !sender.isDestroyed()) sender.send('nfc:log', '[WRITE] Pose le badge CIBLE sur le lecteur…');
       await runDumpScript('write', VAULT_FILE, sender);
       if (sender && !sender.isDestroyed()) sender.send('nfc:log', '[WRITE] ✅ Badge copié avec succès');
@@ -677,6 +775,45 @@ function registerHandlers(ipcMain) {
     } catch (e) {
       if (sender && !sender.isDestroyed()) sender.send('nfc:log', `[WRITE] ❌ ${String(e && e.message || e)}`);
       return { success: false, error: String(e && e.message || e) };
+    } finally {
+      if (restartWatcherAfterWrite) {
+        try {
+          await startPresenceWatcher();
+        } catch (_) {}
+      }
+    }
+  });
+
+  ipcMain.handle('nfc:writeDumpMagic', async (event, hex) => {
+    const sender = event.sender;
+    let restartWatcherAfterWrite = false;
+    try {
+      if (hex != null) {
+        writeVaultForWriterFromHex(hex);
+      }
+
+      if (!fs.existsSync(VAULT_FILE)) {
+        throw new Error('VAULT_MISSING: dump source absent');
+      }
+
+      if (presenceWatcherChild && !presenceWatcherChild.killed) {
+        restartWatcherAfterWrite = true;
+        stopPresenceWatcher();
+      }
+
+      if (sender && !sender.isDestroyed()) sender.send('nfc:log', '[WRITE][MAGIC] Pose le badge CIBLE sur le lecteur…');
+      await runDumpScript('write', VAULT_FILE, sender, { env: { PROPASS_WRITE_MAGIC_UID: '1' } });
+      if (sender && !sender.isDestroyed()) sender.send('nfc:log', '[WRITE][MAGIC] ✅ Badge copié avec UID (mode magic)');
+      return { success: true, magic: true };
+    } catch (e) {
+      if (sender && !sender.isDestroyed()) sender.send('nfc:log', `[WRITE][MAGIC] ❌ ${String(e && e.message || e)}`);
+      return { success: false, error: String(e && e.message || e), magic: true };
+    } finally {
+      if (restartWatcherAfterWrite) {
+        try {
+          await startPresenceWatcher();
+        } catch (_) {}
+      }
     }
   });
 
@@ -709,13 +846,14 @@ function registerHandlers(ipcMain) {
       const d = await cloud.getActiveDumpToCopy();
       const dumpHex = String(d && d.dumpHex || '');
       writeVaultForWriterFromHex(dumpHex);
+      const createdAtMs = Date.parse(String(d && d.createdAt || ''));
       return {
         success: true,
         source: 'cloud',
         data: dumpHex,
         uid: d && d.uid || null,
         createdAt: d && d.createdAt || null,
-        lastSyncTs: Date.now()
+        lastSyncTs: Number.isFinite(createdAtMs) ? createdAtMs : Date.now()
       };
     } catch (e) {
       try {

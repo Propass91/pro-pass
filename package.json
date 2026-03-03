@@ -11,7 +11,7 @@
                     "electron:dev":  "electron .",
                     "generate:icon":  "node scripts/generate_icon.js",
                     "generate:icon:rounded":  "node scripts/round_logo.js \u0026\u0026 node scripts/generate_icon.js",
-                    "predist":  "python -m compileall -b backend",
+                    "predist":  "powershell -ExecutionPolicy Bypass -File ./scripts/prepare_python_runtime.ps1 ; python -m compileall -b backend",
                     "dist":  "electron-builder --win --x64",
                     "pack-windows":  "powershell -ExecutionPolicy Bypass -File ./scripts/pack_windows.ps1"
                 },
@@ -37,6 +37,13 @@
                                              "filter":  [
                                                             "**/*.py",
                                                             "**/*.pyc"
+                                                        ]
+                                         },
+                                         {
+                                             "from":  "runtime/python",
+                                             "to":  "python",
+                                             "filter":  [
+                                                            "**/*"
                                                         ]
                                          }
                                      ],

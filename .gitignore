@@ -30,6 +30,7 @@ cloud/data/
 # Python build artifacts
 __pycache__/
 *.pyc
+runtime/python/
 
 # Local dumps / secrets
 VAULT/
