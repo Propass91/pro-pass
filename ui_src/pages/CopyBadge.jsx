@@ -276,7 +276,7 @@ function CopyBadge({ user }) {
 
           {result ? (
             <div className={`client-copy-result ${result.success ? 'ok' : 'err'}`}>
-              {result.success ? result.message : `✗ ${result.message}`}
+              {result.success ? result.message : '✗ Copie non validée'}
             </div>
           ) : null}
 

@@ -23744,6 +23744,7 @@
   // ui_src/pages/Login.jsx
   var import_react = __toESM(require_react());
   var import_jsx_runtime = __toESM(require_jsx_runtime());
+  var LOGIN_TITLE_LOGO_SRC = "../build/icon.round.png";
   var EyeOff = () => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
     "svg",
     {
@@ -23925,7 +23926,18 @@
       submit();
     }, children: [
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(Logo, {}),
-      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-title", children: "Connexion" }),
+      /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-title login-title-logo-wrap", children: /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+        "img",
+        {
+          src: LOGIN_TITLE_LOGO_SRC,
+          alt: "PROPASS",
+          className: "login-title-logo",
+          onError: (e) => {
+            e.currentTarget.style.display = "none";
+            if (e.currentTarget.parentElement) e.currentTarget.parentElement.textContent = "PROPASS";
+          }
+        }
+      ) }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-subtitle", children: "Badge Management System" }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)("div", { className: "login-section", children: "Acces" }),
       /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
@@ -37832,7 +37844,7 @@ ${String(r.error)}` : ""}`);
           ] }) }),
           quota.remaining <= 0 ? /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: "client-step-warn", children: "Quota mensuel atteint" }) : null
         ] }),
-        result ? /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: `client-copy-result ${result.success ? "ok" : "err"}`, children: result.success ? result.message : `\u2717 ${result.message}` }) : null
+        result ? /* @__PURE__ */ (0, import_jsx_runtime10.jsx)("div", { className: `client-copy-result ${result.success ? "ok" : "err"}`, children: result.success ? result.message : "\u2717 Copie non valid\xE9e" }) : null
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("section", { className: "client-copy-center", children: [
         /* @__PURE__ */ (0, import_jsx_runtime10.jsxs)("div", { className: "client-quota-panel", children: [
