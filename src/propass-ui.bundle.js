@@ -23744,7 +23744,7 @@
   // ui_src/pages/Login.jsx
   var import_react = __toESM(require_react());
   var import_jsx_runtime = __toESM(require_jsx_runtime());
-  var LOGIN_TITLE_LOGO_SRC = "../build/icon.round.png";
+  var LOGIN_TITLE_LOGO_SRC = "assets/logo.png";
   var EyeOff = () => /* @__PURE__ */ (0, import_jsx_runtime.jsxs)(
     "svg",
     {
