@@ -36814,11 +36814,6 @@
     const [readerStatus, setReaderStatus] = (0, import_react8.useState)("\u2014");
     const [badgeStatus, setBadgeStatus] = (0, import_react8.useState)("\u2014");
     const [flashOk, setFlashOk] = (0, import_react8.useState)(false);
-    const [extractLogs, setExtractLogs] = (0, import_react8.useState)([]);
-    const listeningRef = (0, import_react8.useRef)(false);
-    (0, import_react8.useEffect)(() => {
-      listeningRef.current = !!listening;
-    }, [listening]);
     const lastKey = "ppc_dump_last_save_v1";
     const journalKey = "ppc_dump_journal_v1";
     const [lastSaveTs, setLastSaveTs] = (0, import_react8.useState)(0);
@@ -36860,7 +36855,6 @@
     (0, import_react8.useEffect)(() => {
       let unsubPresent = null;
       let unsubRemoved = null;
-      let unsubPyLog = null;
       let alive = true;
       const initRealtime = async () => {
         try {
@@ -36889,21 +36883,6 @@
             } catch (_) {
             }
           });
-        } catch (_) {
-        }
-        try {
-          if (window.api?.nfc?.onPyLog) {
-            unsubPyLog = window.api.nfc.onPyLog((line) => {
-              if (!listeningRef.current) return;
-              const s = String(line == null ? "" : line).replace(/\r/g, "").trimEnd();
-              if (!s) return;
-              if (s.startsWith("[watch]") || s.startsWith("[watch:")) return;
-              setExtractLogs((prev) => {
-                const next = prev.concat([s]);
-                return next.length > 260 ? next.slice(next.length - 260) : next;
-              });
-            });
-          }
         } catch (_) {
         }
       };
@@ -36936,10 +36915,6 @@
         } catch (_) {
         }
         try {
-          if (typeof unsubPyLog === "function") unsubPyLog();
-        } catch (_) {
-        }
-        try {
           window.api.nfc.stopPresenceWatch();
         } catch (_) {
         }
@@ -36947,7 +36922,6 @@
     }, []);
     const extractNow = async () => {
       setCaptureBanner(null);
-      setExtractLogs([]);
       setListening(true);
       setReaderStatus("D\xE9tection\u2026");
       setBadgeStatus("D\xE9tection\u2026");
@@ -36993,7 +36967,6 @@
         setListening(false);
       }
     };
-    const terminalLines = extractLogs.length ? extractLogs : ["CMD pr\xEAt. Lance une extraction pour afficher les logs\u2026"];
     return /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "dump-prod", children: /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "recent-copies dump-prod-card", children: [
       /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", justifyContent: "center" }, children: [
         /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("button", { className: flashOk ? "btn-success" : "btn-primary", onClick: extractNow, disabled: listening, children: [
@@ -37012,10 +36985,6 @@
         ] })
       ] }),
       captureBanner ? /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: `dump-banner ${captureBanner.kind}`, style: { marginTop: 12, textAlign: "center" }, children: captureBanner.text }) : null,
-      /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: { marginTop: 12, border: "1px solid #334155", borderRadius: 10, background: "#0b1220" }, children: [
-        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { style: { padding: "8px 10px", fontWeight: 700, fontSize: 12, color: "#cbd5e1", borderBottom: "1px solid #1e293b" }, children: "CMD" }),
-        /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("pre", { style: { margin: 0, padding: 10, minHeight: 120, maxHeight: 220, overflowY: "auto", fontSize: 12, lineHeight: 1.45, color: "#e2e8f0", whiteSpace: "pre-wrap", wordBreak: "break-word" }, children: terminalLines.join("\n") })
-      ] }),
       /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { style: { marginTop: 14, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, alignItems: "start" }, children: [
         /* @__PURE__ */ (0, import_jsx_runtime6.jsxs)("div", { className: "dump-info-card", children: [
           /* @__PURE__ */ (0, import_jsx_runtime6.jsx)("div", { className: "dump-info-label", children: "Derni\xE8re sauvegarde" }),

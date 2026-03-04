@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Cpu, Loader2 } from 'lucide-react';
 
 export default function Dump() {
@@ -7,12 +7,6 @@ export default function Dump() {
   const [readerStatus, setReaderStatus] = useState('—');
   const [badgeStatus, setBadgeStatus] = useState('—');
   const [flashOk, setFlashOk] = useState(false);
-  const [extractLogs, setExtractLogs] = useState([]);
-  const listeningRef = useRef(false);
-
-  useEffect(() => {
-    listeningRef.current = !!listening;
-  }, [listening]);
 
   const lastKey = 'ppc_dump_last_save_v1';
   const journalKey = 'ppc_dump_journal_v1';
@@ -59,7 +53,6 @@ export default function Dump() {
     // Real-time badge detection (does not replace Python dump engine)
     let unsubPresent = null;
     let unsubRemoved = null;
-    let unsubPyLog = null;
     let alive = true;
 
     const initRealtime = async () => {
@@ -90,20 +83,6 @@ export default function Dump() {
         });
       } catch (_) {}
 
-      try {
-        if (window.api?.nfc?.onPyLog) {
-          unsubPyLog = window.api.nfc.onPyLog((line) => {
-            if (!listeningRef.current) return;
-            const s = String(line == null ? '' : line).replace(/\r/g, '').trimEnd();
-            if (!s) return;
-            if (s.startsWith('[watch]') || s.startsWith('[watch:')) return;
-            setExtractLogs((prev) => {
-              const next = prev.concat([s]);
-              return next.length > 260 ? next.slice(next.length - 260) : next;
-            });
-          });
-        }
-      } catch (_) {}
     };
 
     initRealtime();
@@ -128,7 +107,6 @@ export default function Dump() {
       alive = false;
       try { if (typeof unsubPresent === 'function') unsubPresent(); } catch (_) {}
       try { if (typeof unsubRemoved === 'function') unsubRemoved(); } catch (_) {}
-      try { if (typeof unsubPyLog === 'function') unsubPyLog(); } catch (_) {}
       try { window.api.nfc.stopPresenceWatch(); } catch (_) {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -136,7 +114,6 @@ export default function Dump() {
 
   const extractNow = async () => {
     setCaptureBanner(null);
-    setExtractLogs([]);
     setListening(true);
     setReaderStatus('Détection…');
     setBadgeStatus('Détection…');
@@ -185,10 +162,6 @@ export default function Dump() {
 
   // Production mode: no monitoring stats here.
 
-  const terminalLines = extractLogs.length
-    ? extractLogs
-    : ['CMD prêt. Lance une extraction pour afficher les logs…'];
-
   return (
     <div className="dump-prod">
       <div className="recent-copies dump-prod-card">
@@ -215,15 +188,6 @@ export default function Dump() {
             {captureBanner.text}
           </div>
         ) : null}
-
-        <div style={{ marginTop: 12, border: '1px solid #334155', borderRadius: 10, background: '#0b1220' }}>
-          <div style={{ padding: '8px 10px', fontWeight: 700, fontSize: 12, color: '#cbd5e1', borderBottom: '1px solid #1e293b' }}>
-            CMD
-          </div>
-          <pre style={{ margin: 0, padding: 10, minHeight: 120, maxHeight: 220, overflowY: 'auto', fontSize: 12, lineHeight: 1.45, color: '#e2e8f0', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-            {terminalLines.join('\n')}
-          </pre>
-        </div>
 
         <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'start' }}>
           <div className="dump-info-card">
