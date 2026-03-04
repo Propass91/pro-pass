@@ -84,15 +84,18 @@ async function sendPasswordResetEmail({ to, resetUrl }) {
   }
 }
 
-async function sendInvitationEmail({ to, downloadUrl, username, tempPassword }) {
+async function sendInvitationEmail({ to, downloadUrl, username, email, tempPassword }) {
   const transport = makeTransportOrThrow();
 
   const from = process.env.SMTP_FROM || 'PROPASS <no-reply@propass.local>';
   const subject = 'PROPASS – Téléchargement & activation';
 
-  const resetUrl = arguments[0] && arguments[0].resetUrl ? String(arguments[0].resetUrl) : '';
+  const safeDownloadUrl = String(downloadUrl || '');
+  const safeUsername = String(username || '');
+  const safeEmail = String(email || to || '');
+  const safePassword = String(tempPassword || '');
 
-  const text = `Bonjour,\n\nVotre accès PROPASS est prêt.\n\n1) Télécharger l'application :\n${downloadUrl}\n\n2) Identifiant : ${username}\n\n3) Créer votre mot de passe (lien unique) :\n${resetUrl || '(indisponible)'}\n\nNote: Sur certains PC, Windows/Chrome peut afficher un avertissement car l'application n'est pas encore signée numériquement.\n- Chrome: ouvrir les téléchargements (Ctrl+J) puis choisir "Conserver" si demandé.\n- Windows SmartScreen: cliquer "Informations complémentaires" puis "Exécuter quand même".\n- Si Windows bloque le fichier: clic droit sur le .exe > Propriétés > cocher "Débloquer" (si présent) > Appliquer.\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez ce message.\n`;
+  const text = `Bonjour,\n\nVotre accès PROPASS est prêt.\n\n1) Télécharger l'application :\n${safeDownloadUrl}\n\n2) Vos informations de connexion :\n- Email : ${safeEmail}\n- Identifiant : ${safeUsername}\n\n3) Mot de passe généré automatiquement (6 premières lettres de votre email) :\n${safePassword}\n\nTéléchargez l'application puis connectez-vous avec ces informations.\n`;
 
   const html = `<!doctype html>
 <html lang="fr">
@@ -101,61 +104,59 @@ async function sendInvitationEmail({ to, downloadUrl, username, tempPassword }) 
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>PROPASS</title>
   </head>
-  <body style="margin:0; padding:0; background:#f6f6f6;">
-    <div style="max-width:640px; margin:0 auto; padding:24px; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
-      <div style="background:#ffffff; border-radius:12px; padding:24px;">
-        <div style="font-weight:800; font-size:18px; letter-spacing:0.5px;">PROPASS</div>
-        <div style="height:16px;"></div>
+  <body style="margin:0; padding:0; background:#070f24;">
+    <div style="max-width:700px; margin:0 auto; padding:28px 18px; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;">
+      <div style="background:linear-gradient(180deg,#0b1630 0%,#0a132a 100%); border:1px solid #213252; border-radius:16px; padding:26px; color:#eaf1ff; box-shadow:0 10px 30px rgba(0,0,0,.35);">
+        <div style="font-weight:900; font-size:20px; letter-spacing:0.6px; color:#38bdf8;">PROPASS</div>
+        <div style="height:10px;"></div>
 
-        <div style="font-size:16px; font-weight:700;">Votre accès est prêt</div>
-        <div style="height:8px;"></div>
-        <div style="color:#333; font-size:14px; line-height:20px;">Suivez ces 3 étapes pour installer et activer l'application.</div>
+        <div style="font-size:18px; font-weight:800;">Votre accès client est prêt</div>
+        <div style="height:6px;"></div>
+        <div style="color:#b9c9e6; font-size:14px; line-height:22px;">Suivez ces 3 étapes pour installer et utiliser l'application.</div>
 
-        <div style="height:18px;"></div>
-
-        <div style="display:flex; gap:12px; align-items:flex-start;">
-          <div style="min-width:28px; height:28px; border-radius:999px; background:#111; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700;">1</div>
-          <div>
-            <div style="font-weight:700;">Télécharger</div>
-            <div style="color:#444; font-size:14px; line-height:20px;">Téléchargez et installez l'application PROPASS.</div>
-            <div style="height:10px;"></div>
-            <a href="${String(downloadUrl || '').replace(/"/g, '&quot;')}" style="display:inline-block; padding:12px 16px; border-radius:10px; background:#111; color:#fff; text-decoration:none; font-weight:700;">Télécharger PROPASS</a>
-          </div>
-        </div>
-
-        <div style="height:16px;"></div>
+        <div style="height:20px;"></div>
 
         <div style="display:flex; gap:12px; align-items:flex-start;">
-          <div style="min-width:28px; height:28px; border-radius:999px; background:#111; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700;">2</div>
+          <div style="min-width:30px; height:30px; border-radius:999px; background:#0ea5e9; color:#001225; display:flex; align-items:center; justify-content:center; font-weight:900;">1</div>
           <div>
-            <div style="font-weight:700;">Identification</div>
-            <div style="color:#444; font-size:14px; line-height:20px;">Identifiant : <b>${String(username || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</b></div>
-          </div>
-        </div>
-
-        <div style="height:16px;"></div>
-
-        <div style="display:flex; gap:12px; align-items:flex-start;">
-          <div style="min-width:28px; height:28px; border-radius:999px; background:#111; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700;">3</div>
-          <div>
-            <div style="font-weight:700;">Activation</div>
-            <div style="color:#444; font-size:14px; line-height:20px;">Créez votre mot de passe via ce lien unique.</div>
-            <div style="height:10px;"></div>
-            <a href="${String(resetUrl || '').replace(/"/g, '&quot;')}" style="display:inline-block; padding:12px 16px; border-radius:10px; background:#111; color:#fff; text-decoration:none; font-weight:700;">Créer mon mot de passe</a>
+            <div style="font-weight:800; font-size:16px;">Télécharger l'application</div>
+            <div style="color:#b9c9e6; font-size:14px; line-height:20px;">Téléchargez puis installez PROPASS sur votre ordinateur.</div>
+            <div style="height:12px;"></div>
+            <a href="${safeDownloadUrl.replace(/"/g, '&quot;')}" style="display:inline-block; padding:14px 22px; border-radius:12px; background:linear-gradient(135deg,#22d3ee,#0ea5e9); color:#062035; text-decoration:none; font-weight:900; font-size:16px;">⬇ Télécharger PROPASS</a>
           </div>
         </div>
 
         <div style="height:18px;"></div>
-        <div style="color:#777; font-size:12px; line-height:18px;">
-          Si le bouton ne fonctionne pas, copiez/collez ce lien dans votre navigateur :<br />${String(resetUrl || '').replace(/</g, '&lt;').replace(/>/g, '&gt;')}
+
+        <div style="display:flex; gap:12px; align-items:flex-start;">
+          <div style="min-width:30px; height:30px; border-radius:999px; background:#0ea5e9; color:#001225; display:flex; align-items:center; justify-content:center; font-weight:900;">2</div>
+          <div>
+            <div style="font-weight:800; font-size:16px;">Vos informations de connexion</div>
+            <div style="color:#d8e4fa; font-size:14px; line-height:22px; margin-top:6px;">
+              Email : <b>${safeEmail.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</b><br />
+              Identifiant : <b>${safeUsername.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</b>
+            </div>
+          </div>
         </div>
 
-        <div style="height:14px;"></div>
-        <div style="color:#777; font-size:12px; line-height:18px;">
-          <b>Téléchargement bloqué ?</b><br />
-          Chrome : ouvrez les téléchargements (Ctrl+J) puis cliquez sur <b>Conserver</b> si demandé.<br />
-          Windows SmartScreen : cliquez sur <b>Informations complémentaires</b> puis <b>Exécuter quand même</b>.<br />
-          Si Windows bloque le fichier : clic droit sur le .exe &gt; <b>Propriétés</b> &gt; cochez <b>Débloquer</b> (si présent) puis <b>Appliquer</b>.
+        <div style="height:18px;"></div>
+
+        <div style="display:flex; gap:12px; align-items:flex-start;">
+          <div style="min-width:30px; height:30px; border-radius:999px; background:#0ea5e9; color:#001225; display:flex; align-items:center; justify-content:center; font-weight:900;">3</div>
+          <div>
+            <div style="font-weight:800; font-size:16px;">Mot de passe généré automatiquement</div>
+            <div style="color:#b9c9e6; font-size:14px; line-height:20px;">Votre mot de passe est généré avec les 6 premières lettres de votre email.</div>
+            <div style="height:10px;"></div>
+            <div style="display:inline-block; padding:11px 14px; border-radius:10px; border:1px solid #36527d; background:#09162f; color:#67e8f9; font-weight:900; font-size:18px; letter-spacing:1px;">
+              ${safePassword.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
+            </div>
+          </div>
+        </div>
+
+        <div style="height:18px;"></div>
+        <div style="color:#9eb2d8; font-size:12px; line-height:18px; border-top:1px solid #20314f; padding-top:14px;">
+          Si le bouton ne fonctionne pas, copiez/collez ce lien :<br />
+          ${safeDownloadUrl.replace(/</g, '&lt;').replace(/>/g, '&gt;')}
         </div>
       </div>
     </div>

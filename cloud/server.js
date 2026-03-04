@@ -53,6 +53,16 @@ function computeValidUntil(days = DEFAULT_VALIDITY_DAYS) {
   return d.toISOString();
 }
 
+function generatePasswordFromEmail(email) {
+  const raw = String(email || '').trim().toLowerCase();
+  const localPart = raw.includes('@') ? raw.split('@')[0] : raw;
+  const lettersOnly = localPart.replace(/[^a-z]/g, '');
+  const base = lettersOnly || localPart.replace(/[^a-z0-9]/g, '');
+  const pwd = String(base || '').slice(0, 6);
+  if (pwd.length >= 6) return pwd;
+  return (pwd + newToken(6)).slice(0, 6);
+}
+
 function signUserJwt({ id, username, role }) {
   return jwt.sign(
     { sub: String(id), username: String(username), role: String(role || 'client') },
@@ -597,7 +607,7 @@ app.post('/admin/clients', adminMiddleware, (req, res) => {
 
   // Username strategy: email (simple + unique enough)
   const username = email.toLowerCase();
-  const tempPassword = newToken(6);
+  const tempPassword = generatePasswordFromEmail(email);
   const pwHash = hashPassword(tempPassword);
 
   const out = withDb((db) => {
@@ -729,19 +739,18 @@ app.post('/admin/clients/:id/send-invite', adminMiddleware, async (req, res) => 
   const id = Number(req.params && req.params.id);
   if (!id) return res.status(400).json({ ok: false, error: 'missing_id' });
 
+  const now = new Date().toISOString();
+
   const out = withDb((db) => {
     const row = db.prepare('SELECT * FROM clients WHERE id = ?').get(id);
     if (!row) return { ok: false, error: 'not_found' };
     if (!row.email) return { ok: false, error: 'missing_email' };
 
-    // Generate a one-shot password setup/reset link (no password sent by email)
-    const token = newToken(24);
-    const createdAt = new Date().toISOString();
-    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    db.prepare('INSERT INTO password_resets (client_id, token, expires_at, used_at, created_at) VALUES (?, ?, ?, NULL, ?)')
-      .run(row.id, token, expiresAt, createdAt);
+    const tempPassword = generatePasswordFromEmail(row.email);
+    const pwHash = hashPassword(tempPassword);
+    db.prepare('UPDATE clients SET password_hash = ?, updated_at = ? WHERE id = ?').run(pwHash, now, row.id);
 
-    return { ok: true, client: row, token, expiresAt };
+    return { ok: true, client: row, tempPassword };
   });
 
   if (!out.ok) return res.status(404).json(out);
@@ -754,18 +763,18 @@ app.post('/admin/clients/:id/send-invite', adminMiddleware, async (req, res) => 
   const downloadUrl = looksLikeDirectLink
     ? downloadEnv
     : String((downloadEnv || base)).replace(/\/$/, '') + '/download';
-  const resetUrl = `${String(base).replace(/\/$/, '')}/reset?token=${out.token}`;
 
   try {
     await sendInvitationEmail({
       to: out.client.email,
       downloadUrl,
       username: String(out.client.username),
-      resetUrl
+      email: String(out.client.email),
+      tempPassword: String(out.tempPassword)
     });
-    return res.json({ ok: true, sent: true, resetUrl, downloadUrl, expiresAt: out.expiresAt, expires_at: out.expiresAt });
+    return res.json({ ok: true, sent: true, downloadUrl, tempPassword: String(out.tempPassword) });
   } catch (e) {
-    return res.json({ ok: true, sent: false, resetUrl, downloadUrl, expiresAt: out.expiresAt, expires_at: out.expiresAt, error: String(e && e.message || e) });
+    return res.json({ ok: true, sent: false, downloadUrl, tempPassword: String(out.tempPassword), error: String(e && e.message || e) });
   }
 });
 
