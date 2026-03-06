@@ -7,12 +7,19 @@
     "private":  true,
     "scripts":  {
                     "start":  "electron .",
+        "start:nfc:safe:mac": "PROPASS_WRITE_TRAILERS=0 PROPASS_STRICT_TRAILER_CHECK=1 electron .",
+        "start:nfc:full:mac": "PROPASS_WRITE_TRAILERS=1 PROPASS_STRICT_TRAILER_CHECK=1 electron .",
+        "start:nfc:safe:win": "set PROPASS_WRITE_TRAILERS=0&& set PROPASS_STRICT_TRAILER_CHECK=1&& electron .",
+        "start:nfc:full:win": "set PROPASS_WRITE_TRAILERS=1&& set PROPASS_STRICT_TRAILER_CHECK=1&& electron .",
                     "build":  "node ./node_modules/esbuild/bin/esbuild ui_src/main.jsx --bundle --outfile=src/propass-ui.bundle.js --platform=browser --format=iife --jsx=automatic --sourcemap",
                     "electron:dev":  "electron .",
                     "generate:icon":  "node scripts/generate_icon.js",
                     "generate:icon:rounded":  "node scripts/round_logo.js \u0026\u0026 node scripts/generate_icon.js",
                     "predist":  "powershell -ExecutionPolicy Bypass -File ./scripts/prepare_python_runtime.ps1 ; python -m compileall -b backend",
                     "dist":  "electron-builder --win --x64",
+                    "dist:mac:arm64":  "electron-builder --mac dmg zip --arm64",
+                    "dist:mac:x64":  "electron-builder --mac dmg zip --x64",
+                    "dist:mac:universal":  "electron-builder --mac dmg zip --universal",
                     "pack-windows":  "powershell -ExecutionPolicy Bypass -File ./scripts/pack_windows.ps1"
                 },
     "devDependencies":  {
@@ -55,6 +62,14 @@
                               "target":  [
                                              "nsis"
                                          ]
+                          },
+                  "mac":  {
+                              "category":  "public.app-category.business",
+                              "target":  [
+                                             "dmg",
+                                             "zip"
+                                         ],
+                              "artifactName":  "${productName}-${version}-mac-${arch}.${ext}"
                           },
                   "nsis":  {
                                "oneClick":  true,
