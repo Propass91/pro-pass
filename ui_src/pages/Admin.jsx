@@ -375,11 +375,11 @@ function Admin({ user, onLogout, activePage, externalFilterSiteId, onExternalFil
             <thead>
               <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
                 <th style={{ padding: '10px 6px' }}>Client</th>
+                <th style={{ padding: '10px 6px', width: 160 }}>Actions</th>
                 <th style={{ padding: '10px 6px' }}>Email</th>
                 <th style={{ padding: '10px 6px' }}>Quota mensuel</th>
                 <th style={{ padding: '10px 6px' }}>Validité</th>
                 <th style={{ padding: '10px 6px', width: 220 }}>Ajouter quota</th>
-                <th style={{ padding: '10px 6px', width: 160 }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -395,6 +395,11 @@ function Admin({ user, onLogout, activePage, externalFilterSiteId, onExternalFil
                       <span>{c.name || c.username}</span>
                     </label>
                   </td>
+                  <td style={{ padding: '10px 6px' }}>
+                    <button className="btn-refresh" onClick={() => handleToggleClientStatus(c)}>
+                      {c.is_active === false || c.active === false ? 'Réactiver' : 'Supprimer'}
+                    </button>
+                  </td>
                   <td style={{ padding: '10px 6px', color: 'var(--text-muted)' }}>{c.email || '-'}</td>
                   <td style={{ padding: '10px 6px' }}><strong>{c.quota_remaining}</strong> / {c.monthly_limit}</td>
                   <td style={{ padding: '10px 6px', color: 'var(--text-muted)' }}>{c.valid_until ? new Date(c.valid_until).toLocaleDateString() : '-'}</td>
@@ -408,11 +413,6 @@ function Admin({ user, onLogout, activePage, externalFilterSiteId, onExternalFil
                       />
                       <button className="btn-refresh" onClick={() => handleAddQuota(c.id)}>Ajouter</button>
                     </div>
-                  </td>
-                  <td style={{ padding: '10px 6px' }}>
-                    <button className="btn-refresh" onClick={() => handleToggleClientStatus(c)}>
-                      {c.is_active === false || c.active === false ? 'Réactiver' : 'Supprimer'}
-                    </button>
                   </td>
                 </tr>
               ))}
