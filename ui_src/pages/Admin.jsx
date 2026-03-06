@@ -178,6 +178,19 @@ function Admin({ user, onLogout, activePage, externalFilterSiteId, onExternalFil
     }
   };
 
+  const handleToggleClientStatus = async (client) => {
+    if (!client || client.id == null) return;
+    const isActive = client.is_active !== false && client.active !== false;
+    const prompt = isActive
+      ? `Désactiver le client "${client.name || client.username}" ?`
+      : `Réactiver le client "${client.name || client.username}" ?`;
+    if (!window.confirm(prompt)) return;
+    const r = await window.api.admin.toggleClientStatus(client.id);
+    if (r?.success) {
+      await refreshClients();
+    }
+  };
+
   const handleCreateMasterDump = async () => {
     if (!selectedClientId) return;
     if (dumpMode === 'manual') {
@@ -357,8 +370,8 @@ function Admin({ user, onLogout, activePage, externalFilterSiteId, onExternalFil
           <button className="btn-refresh" onClick={() => refreshAllSites()}>Rafraîchir sites</button>
         </div>
 
-        <div style={{ overflowX: 'auto' }}>
-          <table className="data-table">
+        <div className="admin-table-wrap">
+          <table className="data-table admin-table">
             <thead>
               <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
                 <th style={{ padding: '10px 6px' }}>Client</th>
@@ -366,6 +379,7 @@ function Admin({ user, onLogout, activePage, externalFilterSiteId, onExternalFil
                 <th style={{ padding: '10px 6px' }}>Quota mensuel</th>
                 <th style={{ padding: '10px 6px' }}>Validité</th>
                 <th style={{ padding: '10px 6px', width: 220 }}>Ajouter quota</th>
+                <th style={{ padding: '10px 6px', width: 160 }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -394,6 +408,11 @@ function Admin({ user, onLogout, activePage, externalFilterSiteId, onExternalFil
                       />
                       <button className="btn-refresh" onClick={() => handleAddQuota(c.id)}>Ajouter</button>
                     </div>
+                  </td>
+                  <td style={{ padding: '10px 6px' }}>
+                    <button className="btn-refresh" onClick={() => handleToggleClientStatus(c)}>
+                      {c.is_active === false || c.active === false ? 'Réactiver' : 'Supprimer'}
+                    </button>
                   </td>
                 </tr>
               ))}

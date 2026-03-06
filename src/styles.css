@@ -170,6 +170,21 @@ body {
 	flex: 1;
 	padding: 32px;
 	overflow-y: auto;
+	overflow-x: auto;
+}
+
+.admin-table-wrap {
+	overflow-x: auto;
+	-webkit-overflow-scrolling: touch;
+}
+
+.admin-table {
+	min-width: 980px;
+}
+
+.admin-table th,
+.admin-table td {
+	white-space: nowrap;
 }
 
 .page-header {

@@ -1287,6 +1287,7 @@ body.login-body {
   flex: 1;
   padding: 32px;
   overflow-y: auto;
+  overflow-x: auto;
 }
 
 .logout-btn {
@@ -1485,6 +1486,20 @@ body.login-body {
   padding: 24px;
   border-radius: 12px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+
+.admin-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.admin-table {
+  min-width: 980px;
+}
+
+.admin-table th,
+.admin-table td {
+  white-space: nowrap;
 }
 
 .section-header {
@@ -2355,4 +2370,26 @@ body.login-body {
   color: var(--danger);
   font-size: 13px;
   margin-top: 12px;
+}
+
+@media (max-width: 900px) {
+  .main-content {
+    padding: 16px;
+  }
+
+  .page-header {
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .recent-copies {
+    padding: 16px;
+  }
+
+  .section-header {
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
 }
