@@ -227,6 +227,29 @@ class NFCService {
     return false;
   }
 
+  _isTrailerAccessBitsValid(trailerData) {
+    if (!Buffer.isBuffer(trailerData) || trailerData.length !== 16) return false;
+    const b6 = trailerData[6] & 0xff;
+    const b7 = trailerData[7] & 0xff;
+    const b8 = trailerData[8] & 0xff;
+
+    // MIFARE Classic trailer consistency checks.
+    const c1Inv = b6 & 0x0f;
+    const c1 = (b7 >> 4) & 0x0f;
+
+    const c2Inv = (b6 >> 4) & 0x0f;
+    const c2 = b8 & 0x0f;
+
+    const c3Inv = b7 & 0x0f;
+    const c3 = (b8 >> 4) & 0x0f;
+
+    const c1Ok = c1Inv === ((~c1) & 0x0f);
+    const c2Ok = c2Inv === ((~c2) & 0x0f);
+    const c3Ok = c3Inv === ((~c3) & 0x0f);
+
+    return c1Ok && c2Ok && c3Ok;
+  }
+
   async readUID() {
     if (!this.connection) return null;
     try {
@@ -289,7 +312,11 @@ class NFCService {
     if (dumpBuffer.length !== 1024) throw new Error(`Taille invalide: ${dumpBuffer.length} bytes (attendu: 1024)`);
 
     let blocksWritten = 0;
+    let trailersWritten = 0;
+    let trailersSkippedInvalid = 0;
     let uidCloned = null;
+    const allowTrailerWrite = String(process.env.PROPASS_WRITE_TRAILERS || '') === '1';
+    const strictTrailerCheck = String(process.env.PROPASS_STRICT_TRAILER_CHECK || '1') !== '0';
 
     for (let sector = 0; sector < 16; sector++) {
       const baseBlock = sector * 4;
@@ -310,16 +337,41 @@ class NFCService {
 
         // Safety by default: keep current sector trailers to avoid locking cards.
         // Enable full trailer write only with PROPASS_WRITE_TRAILERS=1.
-        if (String(process.env.PROPASS_WRITE_TRAILERS || '') === '1') {
+        if (allowTrailerWrite) {
           const trailerData = dumpBuffer.slice((baseBlock + 3) * 16, (baseBlock + 4) * 16);
-          await this.transmitWithLog(Buffer.concat([Buffer.from([0xFF, 0xD6, 0x00, baseBlock + 3, 0x10]), trailerData]), 40);
+          if (strictTrailerCheck && !this._isTrailerAccessBitsValid(trailerData)) {
+            trailersSkippedInvalid++;
+            logWarn(`[NFC] Trailer secteur ${sector} ignoré (access bits invalides)`);
+          } else {
+            const trailerWriteRes = await this.transmitWithLog(
+              Buffer.concat([Buffer.from([0xFF, 0xD6, 0x00, baseBlock + 3, 0x10]), trailerData]),
+              40
+            );
+            if (
+              trailerWriteRes &&
+              trailerWriteRes.length >= 2 &&
+              trailerWriteRes[trailerWriteRes.length - 2] === 0x90 &&
+              trailerWriteRes[trailerWriteRes.length - 1] === 0x00
+            ) {
+              trailersWritten++;
+            } else {
+              logWarn(`[NFC] Trailer secteur ${sector} non confirmé par le lecteur`);
+            }
+          }
         }
       } catch (e) {
         logWarn(`[NFC] Secteur ${sector} écriture échouée: ${e.message}`);
       }
     }
 
-    return { success: blocksWritten >= 45, blocksWritten, uidCloned, message: `Gen2: ${blocksWritten} blocs écrits` };
+    return {
+      success: blocksWritten >= 45,
+      blocksWritten,
+      trailersWritten,
+      trailersSkippedInvalid,
+      uidCloned,
+      message: `Gen2: ${blocksWritten} blocs data écrits${allowTrailerWrite ? `, trailers=${trailersWritten}` : ''}`
+    };
   }
 
   // Event handlers
