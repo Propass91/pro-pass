@@ -227,6 +227,43 @@ class NFCService {
     return false;
   }
 
+  _isApduSuccess(response) {
+    return !!(
+      response &&
+      response.length >= 2 &&
+      response[response.length - 2] === 0x90 &&
+      response[response.length - 1] === 0x00
+    );
+  }
+
+  _apduStatusHex(response) {
+    if (!response || response.length < 2) return 'NO_SW';
+    return Buffer.from([response[response.length - 2], response[response.length - 1]]).toString('hex').toUpperCase();
+  }
+
+  async _preAuthenticateSectorWithOrder(baseBlock, keyTypeOrder = [0x61, 0x60]) {
+    const order = Array.isArray(keyTypeOrder) && keyTypeOrder.length ? keyTypeOrder : [0x61, 0x60];
+    const normalized = order.map((v) => Number(v) & 0xff);
+    const candidates = [this._activeKeyHex, ...this.AUTH_KEYS].filter(Boolean);
+
+    for (const keyHex of candidates) {
+      for (const keyType of normalized) {
+        try {
+          await this._loadKeyBToSlot(keyHex, 0x01);
+          const ok = await this._authBlockWithLoadedKey(baseBlock, 0x01, keyType);
+          if (ok) {
+            this._activeKeyHex = keyHex;
+            this._activeKeyType = keyType;
+            return true;
+          }
+        } catch (_) {
+          // ignore and continue scan
+        }
+      }
+    }
+    return false;
+  }
+
   _isTrailerAccessBitsValid(trailerData) {
     if (!Buffer.isBuffer(trailerData) || trailerData.length !== 16) return false;
     const b6 = trailerData[6] & 0xff;
@@ -327,11 +364,39 @@ class NFCService {
         // write blocks 0,1,2 (data)
         for (let i = 0; i < 3; i++) {
           const blockNum = baseBlock + i;
+
+          // Block 0 is manufacturer area and is usually read-only on non-magic cards.
+          if (blockNum === 0 && String(process.env.PROPASS_WRITE_BLOCK0 || '') !== '1') {
+            continue;
+          }
+
+          // Re-auth on target block to maximize compatibility across card/access setups.
+          const writeAuthed = await this._preAuthenticateSectorWithOrder(blockNum, [0x60, 0x61]);
+          if (!writeAuthed) {
+            logWarn(`[NFC] Bloc ${blockNum}: auth écriture impossible`);
+            continue;
+          }
+
           const blockData = dumpBuffer.slice(blockNum * 16, (blockNum + 1) * 16);
-          const writeRes = await this.transmitWithLog(Buffer.concat([Buffer.from([0xFF,0xD6,0x00,blockNum,0x10]), blockData]), 40);
-          if (writeRes && writeRes.length >= 2 && writeRes[writeRes.length - 2] === 0x90 && writeRes[writeRes.length - 1] === 0x00) {
+          let writeRes = await this.transmitWithLog(Buffer.concat([Buffer.from([0xFF, 0xD6, 0x00, blockNum, 0x10]), blockData]), 40);
+
+          // If write is denied, retry once by forcing alternate key type.
+          if (!this._isApduSuccess(writeRes)) {
+            const sw = this._apduStatusHex(writeRes);
+            if (sw === '6300' || sw === '6982') {
+              const altKeyType = this._activeKeyType === 0x60 ? 0x61 : 0x60;
+              const retryAuthed = await this._preAuthenticateSectorWithOrder(blockNum, [altKeyType]);
+              if (retryAuthed) {
+                writeRes = await this.transmitWithLog(Buffer.concat([Buffer.from([0xFF, 0xD6, 0x00, blockNum, 0x10]), blockData]), 40);
+              }
+            }
+          }
+
+          if (this._isApduSuccess(writeRes)) {
             blocksWritten++;
             if (sector === 0 && i === 0) uidCloned = blockData.slice(0,4).toString('hex').toUpperCase();
+          } else {
+            logWarn(`[NFC] Bloc ${blockNum} écriture refusée SW=${this._apduStatusHex(writeRes)}`);
           }
         }
 
