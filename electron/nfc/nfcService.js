@@ -19,6 +19,7 @@ class NFCService {
     // Stored as hex strings for easier logging/comparison.
     this.AUTH_KEYS = [
       'FFFFFFFFFFFF',
+      '000000000000',
       'A0A1A2A3A4A5',
       '314B49474956',
       'EF61A3D48E2A',
@@ -31,6 +32,7 @@ class NFCService {
     ];
 
     this._activeKeyHex = 'EF61A3D48E2A';
+    this._activeKeyType = 0x61; // 0x60 = Key A, 0x61 = Key B
     
     this.callbacks = {
       cardPresent: [],
@@ -187,26 +189,39 @@ class NFCService {
     await this.transmitWithLog(Buffer.from([0xFF, 0x82, 0x00, slot & 0xff, 0x06, ...bytes]), 40);
   }
 
-  async _authBlockWithLoadedKey(blockNumber, slot = 0x01) {
+  async _authBlockWithLoadedKey(blockNumber, slot = 0x01, keyType = 0x61) {
     // FF 86 00 00 05 01 00 <block> 61 <slot>
-    const res = await this.transmitWithLog(Buffer.from([0xFF, 0x86, 0x00, 0x00, 0x05, 0x01, 0x00, blockNumber & 0xff, 0x61, slot & 0xff]), 40);
+    const res = await this.transmitWithLog(Buffer.from([0xFF, 0x86, 0x00, 0x00, 0x05, 0x01, 0x00, blockNumber & 0xff, keyType & 0xff, slot & 0xff]), 40);
     if (!res || res.length < 2) return false;
     return res[res.length - 2] === 0x90 && res[res.length - 1] === 0x00;
   }
 
   async _preAuthenticateSector(baseBlock) {
-    // Try active key first, then the known keys list.
+    // Try active tuple first, then known keys with both Key B and Key A.
     const candidates = [this._activeKeyHex, ...this.AUTH_KEYS].filter(Boolean);
+    const keyTypes = [0x61, 0x60];
+
+    try {
+      await this._loadKeyBToSlot(this._activeKeyHex, 0x01);
+      const okActive = await this._authBlockWithLoadedKey(baseBlock, 0x01, this._activeKeyType);
+      if (okActive) return true;
+    } catch (_) {
+      // fall through to full scan
+    }
+
     for (const keyHex of candidates) {
-      try {
-        await this._loadKeyBToSlot(keyHex, 0x01);
-        const ok = await this._authBlockWithLoadedKey(baseBlock, 0x01);
-        if (ok) {
-          this._activeKeyHex = keyHex;
-          return true;
+      for (const keyType of keyTypes) {
+        try {
+          await this._loadKeyBToSlot(keyHex, 0x01);
+          const ok = await this._authBlockWithLoadedKey(baseBlock, 0x01, keyType);
+          if (ok) {
+            this._activeKeyHex = keyHex;
+            this._activeKeyType = keyType;
+            return true;
+          }
+        } catch (_) {
+          // ignore and try next combination
         }
-      } catch (_) {
-        // ignore and try next key
       }
     }
     return false;
@@ -293,10 +308,12 @@ class NFCService {
           }
         }
 
-        // write trailer (block 3)
-        const trailerData = dumpBuffer.slice((baseBlock + 3) * 16, (baseBlock + 4) * 16);
-        const trRes = await this.transmitWithLog(Buffer.concat([Buffer.from([0xFF,0xD6,0x00,baseBlock+3,0x10]), trailerData]), 40);
-        // consider trailer write as success even if SW ambiguous
+        // Safety by default: keep current sector trailers to avoid locking cards.
+        // Enable full trailer write only with PROPASS_WRITE_TRAILERS=1.
+        if (String(process.env.PROPASS_WRITE_TRAILERS || '') === '1') {
+          const trailerData = dumpBuffer.slice((baseBlock + 3) * 16, (baseBlock + 4) * 16);
+          await this.transmitWithLog(Buffer.concat([Buffer.from([0xFF, 0xD6, 0x00, baseBlock + 3, 0x10]), trailerData]), 40);
+        }
       } catch (e) {
         logWarn(`[NFC] Secteur ${sector} écriture échouée: ${e.message}`);
       }
