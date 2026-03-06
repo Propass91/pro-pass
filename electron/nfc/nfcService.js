@@ -45,23 +45,34 @@ class NFCService {
       this.pcsclite = pcsclite();
       
       return new Promise((resolve, reject) => {
+        let settled = false;
         const timeout = setTimeout(() => {
+          if (settled) return;
+          settled = true;
           const e = new Error('NO_READER');
           e.code = 'NO_READER';
           reject(e);
         }, 10000);
 
         this.pcsclite.on('reader', (reader) => {
-          if (reader.name.includes('ACR122U') || reader.name.includes('ACS')) {
-            clearTimeout(timeout);
-            this.reader = reader;
-            this.setupReader();
-            logInfo(`[NFC] Lecteur trouvé: ${reader.name}`);
-            resolve(this);
+          // Accept the first PC/SC reader seen. Some macOS stacks expose names
+          // that don't contain "ACR122U"/"ACS" and were previously ignored.
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
+          this.reader = reader;
+          this.setupReader();
+          if (!(reader.name.includes('ACR122U') || reader.name.includes('ACS'))) {
+            logWarn(`[NFC] Lecteur non-ACR accepté: ${reader.name}`);
           }
+          logInfo(`[NFC] Lecteur trouvé: ${reader.name}`);
+          resolve(this);
         });
 
         this.pcsclite.on('error', (err) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeout);
           logError('[NFC] PCSC Error', err);
           reject(err);
         });

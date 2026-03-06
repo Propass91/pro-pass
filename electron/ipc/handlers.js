@@ -24,6 +24,65 @@ let presenceWatcherChild = null;
 let presenceWatcherBuf = '';
 let dumpCliModeCache = null;
 let smartCardServiceEnsured = false;
+let NFCService = null;
+let nfcService = null;
+let nodeNfcListenersBound = false;
+
+try {
+  NFCService = require('../nfc/nfcService').NFCService;
+} catch (_) {
+  NFCService = null;
+}
+
+function shouldUseNodeNfcEngine() {
+  const forced = String(process.env.PROPASS_NFC_ENGINE || '').trim().toLowerCase();
+  if (forced === 'python') return false;
+  if (forced === 'node') return !!NFCService;
+  return process.platform === 'darwin' && !!NFCService;
+}
+
+function getNodeNfcState() {
+  const readerConnected = !!(nfcService && nfcService.reader);
+  const cardPresent = !!(nfcService && nfcService.isConnected && nfcService.isConnected());
+  const uid = cardPresent ? (nfcService.currentUID || nfcCardUid || null) : null;
+  return {
+    connected: readerConnected,
+    cardPresent,
+    uid,
+    readerName: readerConnected && nfcService.getReaderName ? nfcService.getReaderName() : null
+  };
+}
+
+async function ensureNodeNfcReady() {
+  if (!NFCService) {
+    throw new Error('NFC_NODE_SERVICE_UNAVAILABLE');
+  }
+  if (!nfcService) {
+    nfcService = new NFCService();
+    await nfcService.init();
+  }
+  if (!nodeNfcListenersBound) {
+    nfcService.onCardPresent((uid) => {
+      emitCardPresent(uid || null);
+      emitNfcLog(`[node] card present${uid ? ` uid=${String(uid)}` : ''}`);
+    });
+    nfcService.onCardRemoved(() => {
+      emitCardRemoved();
+      emitNfcLog('[node] card removed');
+    });
+    nfcService.onError((err) => {
+      emitNfcLog(`[node][error] ${String(err && err.message || err || 'NFC_ERROR')}`);
+    });
+    nodeNfcListenersBound = true;
+  }
+  const st = getNodeNfcState();
+  nfcReaderConnected = !!st.connected;
+  if (!st.cardPresent) {
+    nfcCardPresent = false;
+    nfcCardUid = null;
+  }
+  return st;
+}
 
 function getDumpScriptPath() {
   const prodPath = path.join(process.resourcesPath || '', 'backend', 'nfc', 'dump.py');
@@ -667,6 +726,10 @@ function registerHandlers(ipcMain) {
 
   ipcMain.handle('nfc:init', async () => {
     try {
+      if (shouldUseNodeNfcEngine()) {
+        const st = await ensureNodeNfcReady();
+        return { connected: st.connected, readerName: st.readerName, cardPresent: st.cardPresent, uid: st.uid, success: true };
+      }
       const r = await probeReaderConnection();
       nfcReaderConnected = !!r.connected;
       if (!r.connected) emitCardRemoved();
@@ -677,6 +740,22 @@ function registerHandlers(ipcMain) {
   });
 
   ipcMain.handle('nfc:isConnected', async () => {
+    if (shouldUseNodeNfcEngine()) {
+      try {
+        const st = await ensureNodeNfcReady();
+        return {
+          success: true,
+          connected: !!st.connected,
+          cardPresent: !!st.cardPresent,
+          uid: st.uid || null
+        };
+      } catch (_) {
+        nfcReaderConnected = false;
+        emitCardRemoved();
+        return { success: true, connected: false, cardPresent: false, uid: null };
+      }
+    }
+
     try {
       const r = await probeReaderConnection();
       nfcReaderConnected = !!r.connected;
@@ -696,6 +775,10 @@ function registerHandlers(ipcMain) {
 
   ipcMain.handle('nfc:startPresenceWatch', async () => {
     try {
+      if (shouldUseNodeNfcEngine()) {
+        const st = await ensureNodeNfcReady();
+        return { success: true, watching: true, connected: !!st.connected };
+      }
       return await startPresenceWatcher();
     } catch (e) {
       return { success: false, error: String(e && e.message || e) };
@@ -703,6 +786,9 @@ function registerHandlers(ipcMain) {
   });
 
   ipcMain.handle('nfc:stopPresenceWatch', async () => {
+    if (shouldUseNodeNfcEngine()) {
+      return { success: true };
+    }
     stopPresenceWatcher();
     return { success: true };
   });
@@ -710,6 +796,53 @@ function registerHandlers(ipcMain) {
   ipcMain.handle('nfc:readDump', async (event) => {
     const sender = event.sender;
     try {
+      if (shouldUseNodeNfcEngine()) {
+        if (sender && !sender.isDestroyed()) sender.send('nfc:log', '[READ] Pose le badge SOURCE sur le lecteur…');
+        await ensureNodeNfcReady();
+        if (nfcService && nfcService.waitForCardPresent) {
+          await nfcService.waitForCardPresent(25000);
+        }
+
+        const nodeResult = await nfcService.readDump();
+        if (!nodeResult || !nodeResult.success || !nodeResult.dump) {
+          throw new Error(String(nodeResult && nodeResult.error || 'READ_FAILED'));
+        }
+
+        fs.writeFileSync(VAULT_FILE, Buffer.from(nodeResult.dump));
+        const stats = fs.statSync(VAULT_FILE);
+
+        let syncedToServer = false;
+        let syncError = null;
+        try {
+          const rawDump = fs.readFileSync(VAULT_FILE);
+          const dumpHexForCloud = normalizeDumpForCloudHex(rawDump);
+          const uid = rawDump.length >= 4 ? rawDump.subarray(0, 4).toString('hex').toUpperCase() : null;
+
+          if (authSessionUser && authSessionUser.role === 'admin') {
+            await cloud.adminSetActiveDump({ dumpHex: dumpHexForCloud, uid, source: 'direct' });
+            syncedToServer = true;
+            emitAdminLog(`EXTRACTION_SYNC_OK admin=${authSessionUser.username} size=${rawDump.length}`);
+            const payload = { source: 'cloud', uid, ts: Date.now() };
+            broadcast('dumps:dumpUpdated', payload);
+            broadcast('dump:updated', payload);
+          }
+        } catch (e) {
+          syncError = String(e && e.message || e || 'sync_failed');
+        }
+
+        if (sender && !sender.isDestroyed()) sender.send('nfc:log', `[READ] ✅ Dump sauvegardé (${stats.size} bytes)`);
+        if (authSessionUser && authSessionUser.role === 'admin' && !syncedToServer) {
+          return {
+            success: false,
+            error: `SYNC_SERVER_FAILED: ${syncError || 'unknown'}`,
+            vaultPath: VAULT_FILE,
+            size: stats.size,
+            synced: false
+          };
+        }
+        return { success: true, vaultPath: VAULT_FILE, size: stats.size, synced: syncedToServer };
+      }
+
       if (sender && !sender.isDestroyed()) sender.send('nfc:log', '[READ] Pose le badge SOURCE sur le lecteur…');
       await runDumpScript('read', VAULT_FILE, sender);
       if (!fs.existsSync(VAULT_FILE)) throw new Error('VAULT_EMPTY');
@@ -755,6 +888,30 @@ function registerHandlers(ipcMain) {
     const sender = event.sender;
     let restartWatcherAfterWrite = false;
     try {
+      if (shouldUseNodeNfcEngine()) {
+        if (hex != null) {
+          writeVaultForWriterFromHex(hex);
+        }
+        if (!fs.existsSync(VAULT_FILE)) {
+          throw new Error('VAULT_MISSING: dump source absent');
+        }
+
+        if (sender && !sender.isDestroyed()) sender.send('nfc:log', '[WRITE] Pose le badge CIBLE sur le lecteur…');
+        await ensureNodeNfcReady();
+        if (nfcService && nfcService.waitForCardPresent) {
+          await nfcService.waitForCardPresent(25000);
+        }
+
+        const raw = fs.readFileSync(VAULT_FILE);
+        const dumpHex = normalizeDumpForCloudHex(raw);
+        const wr = await nfcService.writeDump(dumpHex);
+        if (!wr || !wr.success) {
+          throw new Error(String(wr && wr.error || 'WRITE_FAILED'));
+        }
+        if (sender && !sender.isDestroyed()) sender.send('nfc:log', '[WRITE] ✅ Badge copié avec succès');
+        return { success: true, ...wr };
+      }
+
       if (hex != null) {
         writeVaultForWriterFromHex(hex);
       }
@@ -788,6 +945,29 @@ function registerHandlers(ipcMain) {
     const sender = event.sender;
     let restartWatcherAfterWrite = false;
     try {
+      if (shouldUseNodeNfcEngine()) {
+        if (hex != null) {
+          writeVaultForWriterFromHex(hex);
+        }
+        if (!fs.existsSync(VAULT_FILE)) {
+          throw new Error('VAULT_MISSING: dump source absent');
+        }
+        if (sender && !sender.isDestroyed()) sender.send('nfc:log', '[WRITE][MAGIC] Mode Python indisponible sur macOS, fallback écriture standard');
+
+        await ensureNodeNfcReady();
+        if (nfcService && nfcService.waitForCardPresent) {
+          await nfcService.waitForCardPresent(25000);
+        }
+
+        const raw = fs.readFileSync(VAULT_FILE);
+        const dumpHex = normalizeDumpForCloudHex(raw);
+        const wr = await nfcService.writeDump(dumpHex);
+        if (!wr || !wr.success) {
+          throw new Error(String(wr && wr.error || 'WRITE_FAILED'));
+        }
+        return { success: true, magic: false, ...wr };
+      }
+
       if (hex != null) {
         writeVaultForWriterFromHex(hex);
       }

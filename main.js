@@ -85,6 +85,59 @@ let _connectivityTimer = null;
 let _localCloudProc = null;
 let _localCloudInProcStarted = false;
 
+function registerIpcHandlersOrThrow(ipcMainRef) {
+  const errors = [];
+  const candidates = [
+    {
+      label: './ipc/handlers',
+      load: () => {
+        const mod = require('./ipc/handlers');
+        if (!mod || typeof mod.registerHandlers !== 'function') {
+          throw new Error('registerHandlers missing');
+        }
+        mod.registerHandlers(ipcMainRef);
+      }
+    },
+    {
+      label: './electron/ipc/handlers',
+      load: () => {
+        const mod = require('./electron/ipc/handlers');
+        if (!mod || typeof mod.registerHandlers !== 'function') {
+          throw new Error('registerHandlers missing');
+        }
+        mod.registerHandlers(ipcMainRef);
+      }
+    },
+    {
+      label: './handlers',
+      load: () => {
+        const mod = require('./handlers');
+        if (typeof mod !== 'function') {
+          throw new Error('export is not a function');
+        }
+        mod(ipcMainRef);
+      }
+    }
+  ];
+
+  for (const c of candidates) {
+    try {
+      c.load();
+      const okMsg = `[IPC] Handlers registered from ${c.label}`;
+      console.log(okMsg);
+      appendDebug(okMsg);
+      return;
+    } catch (e) {
+      const failMsg = `[IPC] Failed to load ${c.label}: ${_stringifyErr(e)}`;
+      console.warn(failMsg);
+      appendDebug(failMsg);
+      errors.push(failMsg);
+    }
+  }
+
+  throw new Error(`No IPC handlers could be loaded :: ${errors.join(' | ')}`);
+}
+
 function _isLocalCandidate(baseUrl) {
   try {
     const u = new URL(String(baseUrl));
@@ -266,8 +319,13 @@ async function resolveCloudBaseUrl() {
 function createWindow() {
   const iconPath = (() => {
     try {
-      const p = path.join(__dirname, 'build', 'icon.ico');
-      if (fs.existsSync(p)) return p;
+      if (process.platform === 'win32') {
+        const p = path.join(__dirname, 'build', 'icon.ico');
+        if (fs.existsSync(p)) return p;
+      } else {
+        const p = path.join(__dirname, 'build', 'icon.round.png');
+        if (fs.existsSync(p)) return p;
+      }
     } catch (_) {}
     return undefined;
   })();
@@ -339,9 +397,19 @@ app.whenReady().then(async () => {
   process.env.PROPASS_CLOUD_URL = String(chosenBaseUrl);
 
   try {
-    require('./handlers')(ipcMain);
+    registerIpcHandlersOrThrow(ipcMain);
   } catch (e) {
-    console.warn('handlers failed to register', e && e.message);
+    const msg = _stringifyErr(e);
+    console.error('handlers failed to register', msg);
+    appendDebug('HANDLERS_REGISTER_FAIL ' + msg);
+    try {
+      dialog.showErrorBox(
+        'Erreur d\'initialisation',
+        'Les handlers IPC n\'ont pas pu être enregistrés.\n\n' + msg
+      );
+    } catch (_) {}
+    app.quit();
+    return;
   }
 
   createWindow();
@@ -378,22 +446,33 @@ app.whenReady().then(async () => {
   } catch (_) {
     // ignore
   }
-  // Force NFC init at startup (helps ensure reader detection and console APDU logs)
-  try {
-    const { NFCService } = require('./electron/nfc/nfcService');
-    (async () => {
-      try {
-        const _autoNfc = new NFCService();
-        await _autoNfc.init();
-        console.log('✅ NFC INIT OK', _autoNfc.getReaderName());
-        _autoNfc.onCardPresent(uid => { try { if (globalMainWindow && globalMainWindow.webContents) globalMainWindow.webContents.send('nfc:cardPresent', uid); } catch(e){} });
-        _autoNfc.onCardRemoved(() => { try { if (globalMainWindow && globalMainWindow.webContents) globalMainWindow.webContents.send('nfc:cardRemoved'); } catch(e){} });
-      } catch (err) {
-        console.error('❌ NFC INIT FAILED:', err && err.message);
-      }
-    })();
-  } catch (e) {
-    // ignore if module cannot be required during startup
+  // Optional legacy auto-init for diagnostics only. Disabled by default to
+  // avoid reader contention with the IPC-managed NFC service.
+  if (String(process.env.PROPASS_NFC_AUTO_INIT || '').toLowerCase() === 'true') {
+    try {
+      const { NFCService } = require('./electron/nfc/nfcService');
+      (async () => {
+        try {
+          const _autoNfc = new NFCService();
+          await _autoNfc.init();
+          console.log('✅ NFC AUTO INIT OK', _autoNfc.getReaderName());
+          _autoNfc.onCardPresent((uid) => {
+            try {
+              if (globalMainWindow && globalMainWindow.webContents) globalMainWindow.webContents.send('nfc:cardPresent', uid);
+            } catch (_) {}
+          });
+          _autoNfc.onCardRemoved(() => {
+            try {
+              if (globalMainWindow && globalMainWindow.webContents) globalMainWindow.webContents.send('nfc:cardRemoved');
+            } catch (_) {}
+          });
+        } catch (err) {
+          console.error('❌ NFC AUTO INIT FAILED:', err && err.message);
+        }
+      })();
+    } catch (_) {
+      // ignore if module cannot be required during startup
+    }
   }
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
