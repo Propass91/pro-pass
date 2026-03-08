@@ -59,6 +59,12 @@
                                                     "PROPASS"
                                                 ],
                               "icon":  "build/icon.ico",
+                              "extraFiles":  [
+                                                 {
+                                                     "from":  "node_modules/electron/dist/ffmpeg.dll",
+                                                     "to":  "ffmpeg.dll"
+                                                 }
+                                             ],
                               "target":  [
                                              "nsis"
                                          ]
