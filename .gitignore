@@ -20,6 +20,13 @@ pnpm-debug.log*
 # Local environment / secrets
 .env
 cloud/.env
+certs/
+*.key
+*.pem
+*.crt
+*.cer
+*.p12
+*.pfx
 
 # Cloud local data (SQLite)
 cloud/data/
