@@ -1,0 +1,21 @@
+{
+  "name": "mobile-native",
+  "version": "1.0.0",
+  "description": "ProPass Mobile Android (Capacitor)",
+  "main": "index.js",
+  "scripts": {
+    "sync:android": "npx cap sync android",
+    "open:android": "npx cap open android",
+    "build:apk": "npx cap sync android && cd android && gradlew.bat assembleDebug",
+    "setup-java-build:apk": "powershell -ExecutionPolicy Bypass -File ./scripts/setup-java-and-build.ps1",
+    "setup-all-build:apk": "powershell -ExecutionPolicy Bypass -File ./scripts/install-android-sdk-and-build.ps1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@capacitor/android": "^6.2.1",
+    "@capacitor/cli": "^6.2.1",
+    "@capacitor/core": "^6.2.1"
+  }
+}

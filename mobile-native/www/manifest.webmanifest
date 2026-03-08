@@ -1,0 +1,20 @@
+{
+  "name": "PROPASS Mobile",
+  "short_name": "PROPASS",
+  "start_url": "/mobile/",
+  "display": "standalone",
+  "background_color": "#071225",
+  "theme_color": "#0b1630",
+  "icons": [
+    {
+      "src": "/src/assets/logo.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/src/assets/logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
