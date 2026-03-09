@@ -569,8 +569,13 @@ class CloudClient extends EventEmitter {
     if (!r || !r.ok) throw new Error('admin_logs_failed');
     return r;
   }
-}
 
+  async adminDeleteClient(id) {
+    const headers = this._adminHeaders();
+    if (!headers) throw new Error('admin_auth_missing');
+    return fetchJson(this.baseUrl + '/admin/clients/' + id, { method: 'DELETE', headers });
+  }
+}
 module.exports = {
   CloudClient
 };

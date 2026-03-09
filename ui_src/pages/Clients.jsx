@@ -1,5 +1,5 @@
-import React, { useMemo, useState, useEffect } from 'react';
-import { Mail, Pencil, Lock, Unlock, Plus } from 'lucide-react';
+﻿import React, { useMemo, useState, useEffect } from 'react';
+import { Mail, Pencil, Lock, Unlock, Plus, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 function formatDateFr(iso) {
@@ -103,11 +103,11 @@ export default function Clients() {
   const sendInvite = async (id) => {
     try {
       const r = await window.api.admin.sendInvitationEmail(id);
-      if (r?.success && r.sent) {
+      if (r?.ok && r.sent) {
         window.alert('Email envoyé.');
         return;
       }
-      if (r?.success && !r.sent) {
+      if (r?.ok && !r.sent) {
         const err = r?.error ? String(r.error) : 'Envoi échoué';
         const url = r?.resetUrl ? String(r.resetUrl) : '';
         if (url) {
@@ -121,6 +121,16 @@ export default function Clients() {
     } catch (_) {
       window.alert('Envoi impossible.');
     }
+  };
+
+
+  const deleteClient = async (id, name) => {
+    if (!window.confirm('Supprimer ce client ? Action irreversible.')) return;
+    try {
+      const r = await window.api.admin.deleteClient(id);
+      if (r?.success) { await load(); }
+      else { window.alert('Erreur : ' + (r?.error || 'Suppression impossible')); }
+    } catch (_) { window.alert('Erreur lors de la suppression.'); }
   };
 
   return (
@@ -202,6 +212,9 @@ export default function Clients() {
                       >
                         {active ? <Lock size={18} /> : <Unlock size={18} />}
                       </button>
+                      <button className="icon-btn danger" title="Supprimer ce client" onClick={() => deleteClient(r.id, r.company_name || r.username)}>
+                        <Trash2 size={18} />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -234,3 +247,4 @@ export default function Clients() {
     </div>
   );
 }
+

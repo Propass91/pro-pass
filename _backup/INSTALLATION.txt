@@ -1,0 +1,26 @@
+INSTALLATION PROPASS (Windows)
+
+1) Télécharger
+- Téléchargez le fichier d'installation (.exe) via le lien reçu par email.
+
+2) Si Chrome affiche "Non confirmé" / bloque le téléchargement
+- Ouvrez les téléchargements : Ctrl+J
+- Cliquez sur "Conserver" / "Garder quand même" si Chrome le demande
+- Si le téléchargement est interrompu : cliquez sur "Reprendre"
+
+3) Si Windows SmartScreen bloque l'exécution
+- Cliquez sur "Informations complémentaires"
+- Cliquez sur "Exécuter quand même"
+
+4) Si Windows bloque le fichier dans les Propriétés
+- Clic droit sur le fichier .exe > Propriétés
+- En bas de la fenêtre, cochez "Débloquer" (si présent)
+- Cliquez sur Appliquer puis OK
+
+5) Installer
+- Double-cliquez sur l'installateur
+- Suivez les étapes
+
+Note
+- Un avertissement peut apparaître car l'application n'est pas encore signée numériquement.
+- Pour un usage entreprise/production sans avertissements, il faut un certificat de signature de code.

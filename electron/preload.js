@@ -90,6 +90,7 @@ const api = {
     getLogs: (f) => ipcRenderer.invoke('admin:getLogs', f),
     exportLogs: (f) => ipcRenderer.invoke('admin:exportLogs', f),
     getAdminLogs: (t) => ipcRenderer.invoke('admin:getAdminLogs', t),
+    deleteClient: (id) => ipcRenderer.invoke('admin:deleteClient', id),
   },
   sites: {
     getAll: () => ipcRenderer.invoke('sites:getAll'),

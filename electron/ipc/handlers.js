@@ -1477,6 +1477,14 @@ function registerHandlers(ipcMain) {
     }
   });
 
+  ipcMain.handle('admin:deleteClient', async (_event, id) => {
+    if (!(authSessionUser && authSessionUser.role === 'admin')) return { success: false, error: 'admin_required' };
+    try {
+      const result = await cloud.adminDeleteClient(id);
+      return { success: true, ...result };
+    } catch (e) { return { success: false, error: String(e && e.message || e) }; }
+  });
+
   ipcMain.handle('dashboard:getStats', async () => ({ success: true, stats: { totalCopies: 0, successRate: 0 } }));
   ipcMain.handle('dashboard:getRecentCopies', async () => ({ success: true, rows: [] }));
   ipcMain.handle('matrix:sync', async () => ({ success: true }));

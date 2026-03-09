@@ -24838,14 +24838,24 @@
   ];
   var Plus = createLucideIcon("plus", __iconNode18);
 
-  // node_modules/lucide-react/dist/esm/icons/users.js
+  // node_modules/lucide-react/dist/esm/icons/trash-2.js
   var __iconNode19 = [
+    ["path", { d: "M10 11v6", key: "nco0om" }],
+    ["path", { d: "M14 11v6", key: "outv1u" }],
+    ["path", { d: "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6", key: "miytrc" }],
+    ["path", { d: "M3 6h18", key: "d0wm0j" }],
+    ["path", { d: "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2", key: "e791ji" }]
+  ];
+  var Trash2 = createLucideIcon("trash-2", __iconNode19);
+
+  // node_modules/lucide-react/dist/esm/icons/users.js
+  var __iconNode20 = [
     ["path", { d: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2", key: "1yyitq" }],
     ["path", { d: "M16 3.128a4 4 0 0 1 0 7.744", key: "16gr8j" }],
     ["path", { d: "M22 21v-2a4 4 0 0 0-3-3.87", key: "kshegd" }],
     ["circle", { cx: "9", cy: "7", r: "4", key: "nufk8" }]
   ];
-  var Users = createLucideIcon("users", __iconNode19);
+  var Users = createLucideIcon("users", __iconNode20);
 
   // ui_src/components/Sidebar.jsx
   var import_react4 = __toESM(require_react());
@@ -37690,11 +37700,11 @@
     const sendInvite = async (id) => {
       try {
         const r = await window.api.admin.sendInvitationEmail(id);
-        if (r?.success && r.sent) {
+        if (r?.ok && r.sent) {
           window.alert("Email envoy\xE9.");
           return;
         }
-        if (r?.success && !r.sent) {
+        if (r?.ok && !r.sent) {
           const err = r?.error ? String(r.error) : "Envoi \xE9chou\xE9";
           const url = r?.resetUrl ? String(r.resetUrl) : "";
           if (url) {
@@ -37712,6 +37722,19 @@ ${url}`);
 ${String(r.error)}` : ""}`);
       } catch (_) {
         window.alert("Envoi impossible.");
+      }
+    };
+    const deleteClient = async (id, name) => {
+      if (!window.confirm("Supprimer ce client ? Action irreversible.")) return;
+      try {
+        const r = await window.api.admin.deleteClient(id);
+        if (r?.success) {
+          await load();
+        } else {
+          window.alert("Erreur : " + (r?.error || "Suppression impossible"));
+        }
+      } catch (_) {
+        window.alert("Erreur lors de la suppression.");
       }
     };
     return /* @__PURE__ */ (0, import_jsx_runtime7.jsxs)("div", { className: "clients-page", children: [
@@ -37784,7 +37807,8 @@ ${String(r.error)}` : ""}`);
                     onClick: () => toggleStatus(r.id),
                     children: active ? /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(Lock, { size: 18 }) : /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(LockOpen, { size: 18 })
                   }
-                )
+                ),
+                /* @__PURE__ */ (0, import_jsx_runtime7.jsx)("button", { className: "icon-btn danger", title: "Supprimer ce client", onClick: () => deleteClient(r.id, r.company_name || r.username), children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(Trash2, { size: 18 }) })
               ] }) })
             ] }, r.id);
           }),
@@ -38926,6 +38950,7 @@ lucide-react/dist/esm/icons/log-out.js:
 lucide-react/dist/esm/icons/mail.js:
 lucide-react/dist/esm/icons/pencil.js:
 lucide-react/dist/esm/icons/plus.js:
+lucide-react/dist/esm/icons/trash-2.js:
 lucide-react/dist/esm/icons/users.js:
 lucide-react/dist/esm/lucide-react.js:
   (**
