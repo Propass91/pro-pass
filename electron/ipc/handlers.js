@@ -374,6 +374,7 @@ function appendLocalLog(action, companyName) {
 function filterLocalLogs(filters = {}) {
   const actionFilter = String(filters.action || '').trim();
   const societeFilter = String(filters.societe || '').trim().toLowerCase();
+  const clientIdFilter = Number(filters.clientId || 0) || null;
   const start = filters.dateDebut ? new Date(`${filters.dateDebut}T00:00:00`).getTime() : null;
   const end = filters.dateFin ? new Date(`${filters.dateFin}T23:59:59`).getTime() : null;
 
@@ -382,6 +383,7 @@ function filterLocalLogs(filters = {}) {
     if (start != null && ts < start) return false;
     if (end != null && ts > end) return false;
     if (actionFilter && actionFilter !== 'Tous' && String(r.action || '') !== actionFilter) return false;
+    if (clientIdFilter != null && Number(r.client_id || 0) !== clientIdFilter) return false;
     if (societeFilter && !String(r.company_name || '').toLowerCase().includes(societeFilter)) return false;
     return true;
   });

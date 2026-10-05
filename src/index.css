@@ -951,6 +951,25 @@ body {
   color: #64748b;
 }
 
+.logs-client-banner {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  color: #1e3a8a;
+}
+
+.logs-client-banner .link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .logs-table-wrap {
   background: white;
   border: 1px solid #e5e7eb;
