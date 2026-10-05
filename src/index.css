@@ -2393,3 +2393,9 @@ body.login-body {
     margin-bottom: 12px;
   }
 }
+
+.dump-banner.info {
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  color: #1e3a8a;
+}

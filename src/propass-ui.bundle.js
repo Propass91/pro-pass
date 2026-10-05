@@ -37400,6 +37400,18 @@
   // ui_src/pages/Dump.jsx
   var import_react8 = __toESM(require_react());
   var import_jsx_runtime6 = __toESM(require_jsx_runtime());
+  function readerErrorMessage(code) {
+    const c = String(code || "");
+    if (!c) return null;
+    if (/ENOENT|SPAWN_ERROR|python_not_found|PYTHON_NOT_FOUND|WATCHER_SPAWN/i.test(c)) {
+      return "Python introuvable : r\xE9installez PROPASS (Python est fourni avec l'installateur).";
+    }
+    if (/PYSCARD_MISSING/i.test(c)) return "Module du lecteur (pyscard) manquant : r\xE9installez PROPASS.";
+    if (/NO_READER/i.test(c)) return "Aucun lecteur d\xE9tect\xE9 : branchez le lecteur USB (essayez un autre port), puis revenez sur cette page.";
+    if (/CONNECT_FAILED/i.test(c)) return "Badge non lu : posez le badge bien \xE0 plat sur le lecteur et r\xE9essayez.";
+    if (/CARD_TIMEOUT/i.test(c)) return "Badge non d\xE9tect\xE9 : posez le badge bien \xE0 plat sur le lecteur et r\xE9essayez.";
+    return `Erreur lecteur : ${c}`;
+  }
   function Dump() {
     const [listening, setListening] = (0, import_react8.useState)(false);
     const [captureBanner, setCaptureBanner] = (0, import_react8.useState)(null);
@@ -37455,7 +37467,11 @@
           const r = await window.api.nfc.startPresenceWatch();
           if (!alive) return;
           if (r?.success) setReaderStatus("OK");
-          else setReaderStatus("Non d\xE9tect\xE9");
+          else {
+            setReaderStatus("Non d\xE9tect\xE9");
+            const why = readerErrorMessage(r?.error);
+            if (why) setCaptureBanner({ kind: "error", text: why });
+          }
         } catch (_) {
           if (!alive) return;
           setReaderStatus("Non d\xE9tect\xE9");
@@ -37517,6 +37533,7 @@
       setListening(true);
       setReaderStatus("D\xE9tection\u2026");
       setBadgeStatus("D\xE9tection\u2026");
+      setCaptureBanner({ kind: "info", text: "Posez le badge source sur le lecteur et ne le retirez pas pendant la lecture\u2026" });
       try {
         const res = await window.api.nfc.readDump();
         if (!res?.success) {
@@ -37527,8 +37544,9 @@
             setBadgeStatus("OK");
             return;
           }
-          setCaptureBanner({ kind: "error", text: "\xC9CHEC DE LA CAPTURE" });
           const code = String(res?.error || "");
+          const why = readerErrorMessage(code);
+          setCaptureBanner({ kind: "error", text: why ? `\xC9CHEC DE LA CAPTURE : ${why}` : "\xC9CHEC DE LA CAPTURE" });
           if (code === "NO_READER" || code === "PYSCARD_MISSING" || code === "PYTHON_NOT_FOUND") {
             setReaderStatus("Non d\xE9tect\xE9");
             setBadgeStatus("\u2014");
@@ -37551,8 +37569,9 @@
         setFlashOk(true);
         setTimeout(() => setFlashOk(false), 2e3);
         recordSave(ts);
-      } catch (_) {
-        setCaptureBanner({ kind: "error", text: "\xC9CHEC DE LA CAPTURE" });
+      } catch (e) {
+        const why = readerErrorMessage(e && e.message);
+        setCaptureBanner({ kind: "error", text: why ? `\xC9CHEC DE LA CAPTURE : ${why}` : "\xC9CHEC DE LA CAPTURE" });
         setReaderStatus("OK");
         setBadgeStatus("Non d\xE9tect\xE9");
       } finally {

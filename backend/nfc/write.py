@@ -1,5 +1,7 @@
 ﻿from smartcard.System import readers
 import os
+import json
+import time
 
 # Nomenclature PROPASS - badges avec clé PASS_OMEGA
 PASS_OMEGA = [0xEF, 0x61, 0xA3, 0xD4, 0x8E, 0x2A]
@@ -28,12 +30,20 @@ def main():
         print("[-] Materiel absent.")
         return 1
 
+    # Wait for the badge to be on the reader (up to PROPASS_CARD_WAIT_S seconds).
+    wait_s = float(os.environ.get('PROPASS_CARD_WAIT_S') or 20)
+    deadline = time.time() + wait_s
     conn = r[0].createConnection()
-    try:
-        conn.connect()
-    except Exception:
-        print("[-] Connexion lecteur impossible")
-        return 1
+    while True:
+        try:
+            conn.connect()
+            break
+        except Exception:
+            if time.time() >= deadline:
+                print("[-] Connexion lecteur impossible : badge non detecte")
+                print(json.dumps({"success": False, "error": "CARD_TIMEOUT"}))
+                return 1
+            time.sleep(0.3)
 
     with open(SOURCE_PATH, "rb") as f:
         matrix = f.read()

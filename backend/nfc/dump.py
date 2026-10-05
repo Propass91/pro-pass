@@ -34,11 +34,21 @@ def main():
     if not rl:
         print(json.dumps({"success": False, "error": "NO_READER", "code": 1})); return
 
+    # Wait for the badge (it may be placed after clicking "Extraire").
+    import time
+    wait_s = float(os.environ.get('PROPASS_CARD_WAIT_S') or 20)
+    deadline = time.time() + wait_s
     conn = rl[0].createConnection()
-    try:
-        conn.connect()
-    except Exception as ex:
-        print(json.dumps({"success": False, "error": "CONNECT_FAILED", "detail": str(ex), "code": 2})); return
+    last_err = None
+    while True:
+        try:
+            conn.connect()
+            break
+        except Exception as ex:
+            last_err = ex
+            if time.time() >= deadline:
+                print(json.dumps({"success": False, "error": "CARD_TIMEOUT", "detail": str(last_err), "code": 2})); return
+            time.sleep(0.3)
 
     uid = None
     try:

@@ -1,6 +1,20 @@
 import React, { useEffect, useState } from 'react';
 import { Cpu, Loader2 } from 'lucide-react';
 
+// Why the reader does not work, in plain words.
+function readerErrorMessage(code) {
+  const c = String(code || '');
+  if (!c) return null;
+  if (/ENOENT|SPAWN_ERROR|python_not_found|PYTHON_NOT_FOUND|WATCHER_SPAWN/i.test(c)) {
+    return 'Python introuvable : réinstallez PROPASS (Python est fourni avec l\'installateur).';
+  }
+  if (/PYSCARD_MISSING/i.test(c)) return 'Module du lecteur (pyscard) manquant : réinstallez PROPASS.';
+  if (/NO_READER/i.test(c)) return 'Aucun lecteur détecté : branchez le lecteur USB (essayez un autre port), puis revenez sur cette page.';
+  if (/CONNECT_FAILED/i.test(c)) return 'Badge non lu : posez le badge bien à plat sur le lecteur et réessayez.';
+  if (/CARD_TIMEOUT/i.test(c)) return 'Badge non détecté : posez le badge bien à plat sur le lecteur et réessayez.';
+  return `Erreur lecteur : ${c}`;
+}
+
 export default function Dump() {
   const [listening, setListening] = useState(false);
   const [captureBanner, setCaptureBanner] = useState(null); // { kind:'success'|'error', text }
@@ -62,7 +76,11 @@ export default function Dump() {
         const r = await window.api.nfc.startPresenceWatch();
         if (!alive) return;
         if (r?.success) setReaderStatus('OK');
-        else setReaderStatus('Non détecté');
+        else {
+          setReaderStatus('Non détecté');
+          const why = readerErrorMessage(r?.error);
+          if (why) setCaptureBanner({ kind: 'error', text: why });
+        }
       } catch (_) {
         if (!alive) return;
         setReaderStatus('Non détecté');
@@ -117,6 +135,7 @@ export default function Dump() {
     setListening(true);
     setReaderStatus('Détection…');
     setBadgeStatus('Détection…');
+    setCaptureBanner({ kind: 'info', text: 'Posez le badge source sur le lecteur et ne le retirez pas pendant la lecture…' });
     try {
       const res = await window.api.nfc.readDump();
       if (!res?.success) {
@@ -127,8 +146,9 @@ export default function Dump() {
           setBadgeStatus('OK');
           return;
         }
-        setCaptureBanner({ kind: 'error', text: 'ÉCHEC DE LA CAPTURE' });
         const code = String(res?.error || '');
+        const why = readerErrorMessage(code);
+        setCaptureBanner({ kind: 'error', text: why ? `ÉCHEC DE LA CAPTURE : ${why}` : 'ÉCHEC DE LA CAPTURE' });
         if (code === 'NO_READER' || code === 'PYSCARD_MISSING' || code === 'PYTHON_NOT_FOUND') {
           setReaderStatus('Non détecté');
           setBadgeStatus('—');
@@ -151,8 +171,9 @@ export default function Dump() {
       setFlashOk(true);
       setTimeout(() => setFlashOk(false), 2000);
       recordSave(ts);
-    } catch (_) {
-      setCaptureBanner({ kind: 'error', text: 'ÉCHEC DE LA CAPTURE' });
+    } catch (e) {
+      const why = readerErrorMessage(e && e.message);
+      setCaptureBanner({ kind: 'error', text: why ? `ÉCHEC DE LA CAPTURE : ${why}` : 'ÉCHEC DE LA CAPTURE' });
       setReaderStatus('OK');
       setBadgeStatus('Non détecté');
     } finally {
