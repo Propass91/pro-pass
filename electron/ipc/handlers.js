@@ -227,12 +227,14 @@ function runDumpScript(action, target, sender, options = {}) {
     }
 
     let stderrAll = '';
+    let stdoutAll = '';
     const child = spawn(pythonBin, [script, ...args], {
       env: { ...process.env, PYTHONUNBUFFERED: '1', ...envExtra }
     });
 
     child.stdout.on('data', (chunk) => {
       const line = String(chunk || '').trim();
+      stdoutAll += `${String(chunk || '')}`;
       if (line && sender && !sender.isDestroyed()) {
         sender.send('nfc:log', line);
         sender.send('nfc:pyLog', line);
@@ -251,7 +253,19 @@ function runDumpScript(action, target, sender, options = {}) {
     });
 
     child.on('close', (code) => {
-      if (code === 0) resolve({ ok: true, code: 0, stderr: stderrAll });
+      // The scripts report errors as {"success": false, "error": "NO_READER"} on stdout,
+      // sometimes with exit code 0: surface that code instead of a generic failure.
+      let errorCode = null;
+      for (const ln of stdoutAll.split(/\r?\n/)) {
+        const t = ln.trim();
+        if (!t.startsWith('{')) continue;
+        try {
+          const obj = JSON.parse(t);
+          if (obj && obj.success === false && obj.error) errorCode = String(obj.error);
+        } catch (_) {}
+      }
+      if (errorCode) resolve({ ok: false, code: Number(code || 1), stderr: stderrAll, errorCode });
+      else if (code === 0) resolve({ ok: true, code: 0, stderr: stderrAll });
       else resolve({ ok: false, code: Number(code || 1), stderr: stderrAll });
     });
 
@@ -265,6 +279,7 @@ function runDumpScript(action, target, sender, options = {}) {
       if (cliMode === 'argparse') {
         const r = await spawnAndStream(scriptPath, ['--out', target]);
         if (r.ok) return;
+        if (r.errorCode) throw new Error(r.errorCode);
         const detail = compactPyErr(r.stderr);
         throw new Error(`DUMP_SCRIPT_FAILED: exit code ${r.code}${detail ? ` (${detail})` : ''}`);
       }
@@ -276,10 +291,12 @@ function runDumpScript(action, target, sender, options = {}) {
       if (needsArgStyle) {
         const r2 = await spawnAndStream(scriptPath, ['--out', target]);
         if (r2.ok) return;
+        if (r2.errorCode) throw new Error(r2.errorCode);
         const detail = compactPyErr(r2.stderr);
         throw new Error(`DUMP_SCRIPT_FAILED: exit code ${r2.code}${detail ? ` (${detail})` : ''}`);
       }
       {
+        if (r1.errorCode) throw new Error(r1.errorCode);
         const detail = compactPyErr(r1.stderr);
         throw new Error(`DUMP_SCRIPT_FAILED: exit code ${r1.code}${detail ? ` (${detail})` : ''}`);
       }
@@ -289,6 +306,7 @@ function runDumpScript(action, target, sender, options = {}) {
       if (cliMode === 'argparse') {
         const r = await spawnAndStream(writePath, [], { PROPASS_SOURCE_PATH: target, ...extraEnv });
         if (r.ok) return;
+        if (r.errorCode) throw new Error(r.errorCode);
         const detail = compactPyErr(r.stderr);
         throw new Error(`WRITE_SCRIPT_FAILED: exit code ${r.code}${detail ? ` (${detail})` : ''}`);
       }
@@ -300,10 +318,12 @@ function runDumpScript(action, target, sender, options = {}) {
       if (needsWriteFallback) {
         const r2 = await spawnAndStream(writePath, [], { PROPASS_SOURCE_PATH: target, ...extraEnv });
         if (r2.ok) return;
+        if (r2.errorCode) throw new Error(r2.errorCode);
         const detail = compactPyErr(r2.stderr);
         throw new Error(`WRITE_SCRIPT_FAILED: exit code ${r2.code}${detail ? ` (${detail})` : ''}`);
       }
       {
+        if (r1.errorCode) throw new Error(r1.errorCode);
         const detail = compactPyErr(r1.stderr);
         throw new Error(`DUMP_SCRIPT_FAILED: exit code ${r1.code}${detail ? ` (${detail})` : ''}`);
       }
@@ -844,7 +864,17 @@ function registerHandlers(ipcMain) {
       }
 
       if (sender && !sender.isDestroyed()) sender.send('nfc:log', '[READ] Pose le badge SOURCE sur le lecteur…');
-      await runDumpScript('read', VAULT_FILE, sender);
+      // The presence watcher also talks to the card: pause it during the read
+      // (same as for writes) so the dump script gets the card to itself.
+      const restartWatcher = !!(presenceWatcherChild && !presenceWatcherChild.killed);
+      if (restartWatcher) stopPresenceWatcher();
+      try {
+        await runDumpScript('read', VAULT_FILE, sender);
+      } finally {
+        if (restartWatcher) {
+          try { await startPresenceWatcher(); } catch (_) {}
+        }
+      }
       if (!fs.existsSync(VAULT_FILE)) throw new Error('VAULT_EMPTY');
       const stats = fs.statSync(VAULT_FILE);
 
