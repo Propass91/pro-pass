@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Filter, Download, X } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
+import { Filter, Download } from 'lucide-react';
 
 function formatDateTime(ts) {
   const d = new Date(Number(ts || 0));
@@ -25,28 +24,13 @@ function pagesCompact({ page, pageCount }) {
   return out;
 }
 
-const EMPTY_FILTERS = { societe: '', clientId: '', action: 'Tous', dateDebut: '', dateFin: '' };
-
 export default function Logs() {
-  // Opened from the Clients page: /history?clientId=12&societe=ACME
-  const [searchParams, setSearchParams] = useSearchParams();
-  const urlClientId = searchParams.get('clientId') || '';
-  const urlSociete = searchParams.get('societe') || '';
-  const urlUsername = searchParams.get('username') || '';
-
-  const [qSociete, setQSociete] = useState(urlClientId ? '' : urlSociete);
+  const [qSociete, setQSociete] = useState('');
   const [qAction, setQAction] = useState('Tous');
   const [qStart, setQStart] = useState('');
   const [qEnd, setQEnd] = useState('');
 
-  const [filters, setFilters] = useState({
-    ...EMPTY_FILTERS,
-    societe: urlClientId ? '' : urlSociete,
-    clientId: urlClientId
-  });
-  const [clientNames, setClientNames] = useState([]);
-  // Lets locally stored logs without client_id still match this client
-  const clientNameFilters = filters.clientId ? { clientName: urlSociete, clientUsername: urlUsername } : {};
+  const [filters, setFilters] = useState({ societe: '', action: 'Tous', dateDebut: '', dateFin: '' });
   const [page, setPage] = useState(1);
   const limit = 10;
 
@@ -59,7 +43,7 @@ export default function Logs() {
   const load = async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const r = await window.api.admin.getLogs({ ...filters, ...clientNameFilters, page, limit });
+      const r = await window.api.admin.getLogs({ ...filters, page, limit });
       if (r?.success) {
         setRows(Array.isArray(r.rows) ? r.rows : []);
         setTotal(Number(r.total || 0));
@@ -72,32 +56,6 @@ export default function Logs() {
       if (!silent) setLoading(false);
     }
   };
-
-  useEffect(() => {
-    setFilters((f) => ({ ...f, clientId: urlClientId, societe: urlClientId ? '' : (urlSociete || f.societe) }));
-    if (!urlClientId && urlSociete) setQSociete(urlSociete);
-    setPage(1);
-  }, [urlClientId, urlSociete]);
-
-  // Client names for the search field suggestions
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await window.api.admin.getClients();
-        const list = Array.isArray(r?.clients) ? r.clients : [];
-        const names = new Set();
-        list.forEach((c) => {
-          [c?.company_name, c?.name, c?.username].forEach((v) => {
-            const n = String(v || '').trim();
-            if (n) names.add(n);
-          });
-        });
-        setClientNames(Array.from(names).sort((a, b) => a.localeCompare(b, 'fr')));
-      } catch (_) {
-        setClientNames([]);
-      }
-    })();
-  }, []);
 
   useEffect(() => {
     load();
@@ -113,13 +71,7 @@ export default function Logs() {
   }, [lastRefresh]);
 
   const apply = () => {
-    setFilters({ societe: qSociete, clientId: filters.clientId, action: qAction, dateDebut: qStart, dateFin: qEnd });
-    setPage(1);
-  };
-
-  const clearClient = () => {
-    setSearchParams({});
-    setFilters((f) => ({ ...f, clientId: '', societe: qSociete }));
+    setFilters({ societe: qSociete, action: qAction, dateDebut: qStart, dateFin: qEnd });
     setPage(1);
   };
 
@@ -128,14 +80,13 @@ export default function Logs() {
     setQAction('Tous');
     setQStart('');
     setQEnd('');
-    setSearchParams({});
-    setFilters(EMPTY_FILTERS);
+    setFilters({ societe: '', action: 'Tous', dateDebut: '', dateFin: '' });
     setPage(1);
   };
 
   const exportCsv = async () => {
     try {
-      await window.api.admin.exportLogs({ ...filters, ...clientNameFilters });
+      await window.api.admin.exportLogs(filters);
     } catch (_) {
       // ignore
     }
@@ -158,29 +109,8 @@ export default function Logs() {
         </button>
       </header>
 
-      {filters.clientId ? (
-        <div className="logs-client-banner">
-          <span>
-            Logs du client <strong>{urlSociete || `#${filters.clientId}`}</strong> · {total} entrée{total > 1 ? 's' : ''}
-          </span>
-          <button className="link gray" type="button" onClick={clearClient}>
-            <X size={14} /> Voir tous les clients
-          </button>
-        </div>
-      ) : null}
-
       <div className="logs-filters">
-        <input
-          className="input"
-          placeholder="Nom du client / société"
-          list="logs-client-names"
-          value={qSociete}
-          onChange={(e) => setQSociete(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') apply(); }}
-        />
-        <datalist id="logs-client-names">
-          {clientNames.map((n) => <option key={n} value={n} />)}
-        </datalist>
+        <input className="input" placeholder="Société" value={qSociete} onChange={(e) => setQSociete(e.target.value)} />
         <select className="input" value={qAction} onChange={(e) => setQAction(e.target.value)}>
           <option>Tous</option>
           <option>Copié</option>
@@ -201,7 +131,6 @@ export default function Logs() {
             <tr>
               <th>ID</th>
               <th>Société</th>
-              <th>Identifiant</th>
               <th>Actions</th>
               <th>Date</th>
               <th>Heure</th>
@@ -216,7 +145,6 @@ export default function Logs() {
                 <tr key={r.id}>
                   <td>#{r.id}</td>
                   <td>{r.company_name || '—'}</td>
-                  <td>{r.username || '—'}</td>
                   <td><span className={badgeClass}>{act}</span></td>
                   <td>{date}</td>
                   <td>{time}</td>
@@ -225,7 +153,7 @@ export default function Logs() {
             })}
             {!rows.length ? (
               <tr>
-                <td colSpan={6} className="empty">{loading ? 'Chargement…' : 'Aucun log'}</td>
+                <td colSpan={5} className="empty">{loading ? 'Chargement…' : 'Aucun log'}</td>
               </tr>
             ) : null}
           </tbody>

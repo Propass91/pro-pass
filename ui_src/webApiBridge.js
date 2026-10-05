@@ -441,7 +441,6 @@ function installWebApiBridge() {
     async getLogs(filters = {}) {
       const q = buildQuery({
         societe: filters.societe,
-        clientId: filters.clientId,
         action: filters.action,
         dateDebut: filters.dateDebut,
         dateFin: filters.dateFin,

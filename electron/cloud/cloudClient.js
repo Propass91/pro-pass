@@ -555,7 +555,6 @@ class CloudClient extends EventEmitter {
     if (!headers) throw new Error('admin_auth_missing');
     const qs = new URLSearchParams();
     if (filters.societe) qs.set('societe', String(filters.societe));
-    if (filters.clientId) qs.set('clientId', String(filters.clientId));
     if (filters.action) qs.set('action', String(filters.action));
     if (filters.dateDebut) qs.set('dateDebut', String(filters.dateDebut));
     if (filters.dateFin) qs.set('dateFin', String(filters.dateFin));

@@ -362,7 +362,7 @@ app.post('/auth/login', (req, res) => {
     if (!client || !client.password_hash) return { ok: false, error: 'invalid_credentials' };
     if (!verifyPassword(String(password), String(client.password_hash))) return { ok: false, error: 'invalid_credentials' };
     const token = signUserJwt({ id: client.id, username: client.username, role: 'client' });
-    return { ok: true, token, role: 'client', client: { id: client.id, username: client.username, name: client.name, email: client.email, company_name: client.company_name || null } };
+    return { ok: true, token, role: 'client', client: { id: client.id, username: client.username, name: client.name, email: client.email } };
   });
 
   if (!out.ok) return res.status(401).json(out);
@@ -963,8 +963,6 @@ app.get('/admin/copy-stats', adminMiddleware, (req, res) => {
 // --- Admin: Logs with server-side pagination (lazy loading) ---
 app.get('/admin/logs', adminMiddleware, (req, res) => {
   const societe = String((req.query && req.query.societe) || '').trim();
-  const clientIdRaw = Number((req.query && req.query.clientId) || 0);
-  const clientId = Number.isInteger(clientIdRaw) && clientIdRaw > 0 ? clientIdRaw : null;
   const action = String((req.query && req.query.action) || 'Tous').trim();
   const dateDebut = String((req.query && req.query.dateDebut) || '').trim();
   const dateFin = String((req.query && req.query.dateFin) || '').trim();
@@ -975,31 +973,17 @@ app.get('/admin/logs', adminMiddleware, (req, res) => {
     const where = [];
     const args = [];
 
-    if (clientId != null) {
-      where.push('l.client_id = ?');
-      args.push(clientId);
-    }
-
-    // Match the name stored on the log OR the client's current identity
-    // (company renamed since, contact name, username, email).
     if (societe) {
-      const like = `%${societe.toLowerCase()}%`;
-      where.push(`(
-        LOWER(l.company_name) LIKE ?
-        OR LOWER(c.company_name) LIKE ?
-        OR LOWER(c.name) LIKE ?
-        OR LOWER(c.username) LIKE ?
-        OR LOWER(c.email) LIKE ?
-      )`);
-      args.push(like, like, like, like, like);
+      where.push('LOWER(company_name) LIKE ?');
+      args.push(`%${societe.toLowerCase()}%`);
     }
 
     if (action && action !== 'Tous') {
       if (action === 'Copié') {
-        where.push('l.action = ?');
+        where.push('action = ?');
         args.push('Copié');
       } else if (action === 'Échec copie' || action === 'Echec copie') {
-        where.push('l.action = ?');
+        where.push('action = ?');
         args.push('Échec copie');
       }
     }
@@ -1016,27 +1000,26 @@ app.get('/admin/logs', adminMiddleware, (req, res) => {
     const tsStart = toTs(dateDebut, false);
     const tsEnd = toTs(dateFin, true);
     if (tsStart != null) {
-      where.push('l.ts >= ?');
+      where.push('ts >= ?');
       args.push(tsStart);
     }
     if (tsEnd != null) {
-      where.push('l.ts <= ?');
+      where.push('ts <= ?');
       args.push(tsEnd);
     }
 
-    const fromSql = 'FROM copy_logs l LEFT JOIN clients c ON c.id = l.client_id';
     const whereSql = where.length ? ('WHERE ' + where.join(' AND ')) : '';
-    const totalRow = db.prepare(`SELECT COUNT(1) AS c ${fromSql} ${whereSql}`).get(...args);
+    const totalRow = db.prepare(`SELECT COUNT(1) AS c FROM copy_logs ${whereSql}`).get(...args);
     const total = Number(totalRow && totalRow.c || 0);
     const pageCount = Math.max(1, Math.ceil(total / limit));
     const safePage = Math.min(page, pageCount);
     const offset = (safePage - 1) * limit;
 
     const rows = db.prepare(`
-      SELECT l.id, l.client_id, l.company_name, l.action, l.ts, c.username
-      ${fromSql}
+      SELECT id, company_name, action, ts
+      FROM copy_logs
       ${whereSql}
-      ORDER BY l.id DESC
+      ORDER BY id DESC
       LIMIT ? OFFSET ?
     `).all(...args, limit, offset);
 

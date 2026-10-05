@@ -360,16 +360,13 @@ function writeLocalLogs(rows) {
   } catch (_) {}
 }
 
-function appendLocalLog(action, companyName, client = null) {
+function appendLocalLog(action, companyName) {
   const rows = readLocalLogs();
-  const clientId = Number(client && client.id || 0) || null;
   rows.unshift({
     id: `L${Date.now()}${Math.floor(Math.random() * 1000)}`,
     ts: Date.now(),
     action: String(action || '—'),
-    company_name: String(companyName || '—'),
-    client_id: clientId,
-    username: client && client.username ? String(client.username) : null
+    company_name: String(companyName || '—')
   });
   writeLocalLogs(rows.slice(0, 3000));
 }
@@ -377,11 +374,6 @@ function appendLocalLog(action, companyName, client = null) {
 function filterLocalLogs(filters = {}) {
   const actionFilter = String(filters.action || '').trim();
   const societeFilter = String(filters.societe || '').trim().toLowerCase();
-  const clientIdFilter = Number(filters.clientId || 0) || null;
-  // Older local entries have no client_id: fall back to the client's name / username.
-  const clientNames = [filters.clientName, filters.clientUsername]
-    .map((v) => String(v || '').trim().toLowerCase())
-    .filter(Boolean);
   const start = filters.dateDebut ? new Date(`${filters.dateDebut}T00:00:00`).getTime() : null;
   const end = filters.dateFin ? new Date(`${filters.dateFin}T23:59:59`).getTime() : null;
 
@@ -390,19 +382,7 @@ function filterLocalLogs(filters = {}) {
     if (start != null && ts < start) return false;
     if (end != null && ts > end) return false;
     if (actionFilter && actionFilter !== 'Tous' && String(r.action || '') !== actionFilter) return false;
-    if (clientIdFilter != null) {
-      const rowClientId = Number(r.client_id || 0) || null;
-      if (rowClientId != null) {
-        if (rowClientId !== clientIdFilter) return false;
-      } else {
-        const rowNames = [r.company_name, r.username].map((v) => String(v || '').trim().toLowerCase());
-        if (!clientNames.some((n) => rowNames.includes(n))) return false;
-      }
-    }
-    if (societeFilter) {
-      const hay = `${String(r.company_name || '')} ${String(r.username || '')}`.toLowerCase();
-      if (!hay.includes(societeFilter)) return false;
-    }
+    if (societeFilter && !String(r.company_name || '').toLowerCase().includes(societeFilter)) return false;
     return true;
   });
 }
@@ -1100,13 +1080,13 @@ function registerHandlers(ipcMain) {
       const q = await cloud.decrementQuota();
       broadcast('cloud:quotaUpdate', q || null);
       const company = resolveCompanyNameFromUser(authSessionUser);
-      appendLocalLog('Copié', company, authSessionUser);
+      appendLocalLog('Copié', company);
       emitAdminLog(`COPIE client=${authSessionUser.username} remaining=${Number(q && q.remaining || 0)}`);
       return { success: true, quota: q };
     } catch (e) {
       try { await cloud.logCopyFail(); } catch (_) {}
       const company = resolveCompanyNameFromUser(authSessionUser);
-      appendLocalLog('Échec copie', company, authSessionUser);
+      appendLocalLog('Échec copie', company);
       emitAdminLog(`ECHEC_COPIE client=${authSessionUser.username} reason=${String(e && e.message || e)}`);
       return { success: false, error: String(e && e.message || e) };
     }
@@ -1115,7 +1095,7 @@ function registerHandlers(ipcMain) {
   ipcMain.handle('dumps:logCopyFail', async () => {
     try { await cloud.logCopyFail(); } catch (_) {}
     const company = resolveCompanyNameFromUser(authSessionUser);
-    appendLocalLog('Échec copie', company, authSessionUser);
+    appendLocalLog('Échec copie', company);
     emitAdminLog(`ECHEC_COPIE client=${authSessionUser && authSessionUser.username || 'unknown'}`);
     return { success: true };
   });
@@ -1149,10 +1129,7 @@ function registerHandlers(ipcMain) {
       const addQuota = Number(payload && payload.addQuota || 0);
       const row = await cloud.adminAddQuota({ clientId, username, addQuota, validityDays: 30 });
       const company = String(row && (row.company_name || row.company || row.username || row.id) || '—');
-      appendLocalLog(`Recharge quota (+${addQuota})`, company, {
-        id: (row && row.id) || clientId,
-        username: (row && row.username) || username
-      });
+      appendLocalLog(`Recharge quota (+${addQuota})`, company);
       emitAdminLog(`RECHARGE client=${company} +${addQuota} remaining=${Number(row && row.quota_remaining || 0)}`);
       return { success: true, client: row };
     } catch (e) {

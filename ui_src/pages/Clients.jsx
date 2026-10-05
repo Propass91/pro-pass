@@ -1,5 +1,5 @@
 ﻿import React, { useMemo, useState, useEffect } from 'react';
-import { Mail, Pencil, Lock, Unlock, Plus, Trash2, ScrollText } from 'lucide-react';
+import { Mail, Pencil, Lock, Unlock, Plus, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 function formatDateFr(iso) {
@@ -201,17 +201,6 @@ export default function Clients() {
                     <div className="actions">
                       <button className="icon-btn" title="Envoyer email de téléchargement" onClick={() => sendInvite(r.id)}>
                         <Mail size={18} />
-                      </button>
-                      <button
-                        className="icon-btn"
-                        title="Voir les logs de ce client"
-                        onClick={() => navigate(`/history?${new URLSearchParams({
-                          clientId: String(r.id),
-                          societe: String(r.company_name || r.name || r.username || ''),
-                          username: String(r.username || '')
-                        }).toString()}`)}
-                      >
-                        <ScrollText size={18} />
                       </button>
                       <button className="icon-btn" title="Modifier le client" onClick={() => navigate(`/clients/${r.id}`)}>
                         <Pencil size={18} />
