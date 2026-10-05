@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Filter, Download } from 'lucide-react';
+import { Search, X, Download } from 'lucide-react';
 
 function formatDateTime(ts) {
   const d = new Date(Number(ts || 0));
@@ -32,6 +32,7 @@ export default function Logs() {
 
   const [filters, setFilters] = useState({ societe: '', action: 'Tous', dateDebut: '', dateFin: '' });
   const [page, setPage] = useState(1);
+  const [clientNames, setClientNames] = useState([]);
   const limit = 10;
 
   const [rows, setRows] = useState([]);
@@ -70,10 +71,39 @@ export default function Logs() {
     return `En direct · ${time}`;
   }, [lastRefresh]);
 
-  const apply = () => {
-    setFilters({ societe: qSociete, action: qAction, dateDebut: qStart, dateFin: qEnd });
-    setPage(1);
-  };
+  // Liste des sociétés pour l'autocomplétion du champ de recherche
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await window.api.admin.getClients();
+        if (!alive || !r?.success) return;
+        const names = (r.clients || [])
+          .map((c) => String(c?.company_name || c?.name || '').trim())
+          .filter(Boolean);
+        setClientNames([...new Set(names)].sort((a, b) => a.localeCompare(b, 'fr')));
+      } catch (_) {
+        // ignore
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // Recherche automatique : les filtres s'appliquent dès qu'ils changent
+  // (avec un léger délai pendant la frappe du nom de société)
+  useEffect(() => {
+    const t = setTimeout(() => {
+      const next = { societe: qSociete.trim(), action: qAction, dateDebut: qStart, dateFin: qEnd };
+      if (
+        filters.societe === next.societe && filters.action === next.action &&
+        filters.dateDebut === next.dateDebut && filters.dateFin === next.dateFin
+      ) return;
+      setFilters(next);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qSociete, qAction, qStart, qEnd]);
 
   const reset = () => {
     setQSociete('');
@@ -110,7 +140,25 @@ export default function Logs() {
       </header>
 
       <div className="logs-filters">
-        <input className="input" placeholder="Société" value={qSociete} onChange={(e) => setQSociete(e.target.value)} />
+        <div className="logs-search">
+          <Search size={16} className="logs-search-icon" />
+          <input
+            className="input"
+            placeholder="Rechercher un client…"
+            list="logs-clients"
+            value={qSociete}
+            onChange={(e) => setQSociete(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Escape') setQSociete(''); }}
+          />
+          {qSociete ? (
+            <button type="button" className="logs-search-clear" onClick={() => setQSociete('')} title="Effacer">
+              <X size={14} />
+            </button>
+          ) : null}
+          <datalist id="logs-clients">
+            {clientNames.map((n) => <option key={n} value={n} />)}
+          </datalist>
+        </div>
         <select className="input" value={qAction} onChange={(e) => setQAction(e.target.value)}>
           <option>Tous</option>
           <option>Copié</option>
@@ -118,10 +166,6 @@ export default function Logs() {
         </select>
         <input className="input" type="date" value={qStart} onChange={(e) => setQStart(e.target.value)} />
         <input className="input" type="date" value={qEnd} onChange={(e) => setQEnd(e.target.value)} />
-        <button className="btn-primary" onClick={apply} disabled={loading}>
-          <Filter size={18} />
-          Appliquer les filtres
-        </button>
         <button className="link gray" onClick={reset} type="button">Réinitialiser les filtres</button>
       </div>
 

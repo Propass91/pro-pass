@@ -24760,24 +24760,12 @@
   ];
   var Download = createLucideIcon("download", __iconNode9);
 
-  // node_modules/lucide-react/dist/esm/icons/funnel.js
-  var __iconNode10 = [
-    [
-      "path",
-      {
-        d: "M10 20a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341L21.74 4.67A1 1 0 0 0 21 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14z",
-        key: "sc7q7i"
-      }
-    ]
-  ];
-  var Funnel = createLucideIcon("funnel", __iconNode10);
-
   // node_modules/lucide-react/dist/esm/icons/loader-circle.js
-  var __iconNode11 = [["path", { d: "M21 12a9 9 0 1 1-6.219-8.56", key: "13zald" }]];
-  var LoaderCircle = createLucideIcon("loader-circle", __iconNode11);
+  var __iconNode10 = [["path", { d: "M21 12a9 9 0 1 1-6.219-8.56", key: "13zald" }]];
+  var LoaderCircle = createLucideIcon("loader-circle", __iconNode10);
 
   // node_modules/lucide-react/dist/esm/icons/loader.js
-  var __iconNode12 = [
+  var __iconNode11 = [
     ["path", { d: "M12 2v4", key: "3427ic" }],
     ["path", { d: "m16.2 7.8 2.9-2.9", key: "r700ao" }],
     ["path", { d: "M18 12h4", key: "wj9ykh" }],
@@ -24787,39 +24775,39 @@
     ["path", { d: "M2 12h4", key: "j09sii" }],
     ["path", { d: "m4.9 4.9 2.9 2.9", key: "giyufr" }]
   ];
-  var Loader = createLucideIcon("loader", __iconNode12);
+  var Loader = createLucideIcon("loader", __iconNode11);
 
   // node_modules/lucide-react/dist/esm/icons/lock-open.js
-  var __iconNode13 = [
+  var __iconNode12 = [
     ["rect", { width: "18", height: "11", x: "3", y: "11", rx: "2", ry: "2", key: "1w4ew1" }],
     ["path", { d: "M7 11V7a5 5 0 0 1 9.9-1", key: "1mm8w8" }]
   ];
-  var LockOpen = createLucideIcon("lock-open", __iconNode13);
+  var LockOpen = createLucideIcon("lock-open", __iconNode12);
 
   // node_modules/lucide-react/dist/esm/icons/lock.js
-  var __iconNode14 = [
+  var __iconNode13 = [
     ["rect", { width: "18", height: "11", x: "3", y: "11", rx: "2", ry: "2", key: "1w4ew1" }],
     ["path", { d: "M7 11V7a5 5 0 0 1 10 0v4", key: "fwvmzm" }]
   ];
-  var Lock = createLucideIcon("lock", __iconNode14);
+  var Lock = createLucideIcon("lock", __iconNode13);
 
   // node_modules/lucide-react/dist/esm/icons/log-out.js
-  var __iconNode15 = [
+  var __iconNode14 = [
     ["path", { d: "m16 17 5-5-5-5", key: "1bji2h" }],
     ["path", { d: "M21 12H9", key: "dn1m92" }],
     ["path", { d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4", key: "1uf3rs" }]
   ];
-  var LogOut = createLucideIcon("log-out", __iconNode15);
+  var LogOut = createLucideIcon("log-out", __iconNode14);
 
   // node_modules/lucide-react/dist/esm/icons/mail.js
-  var __iconNode16 = [
+  var __iconNode15 = [
     ["path", { d: "m22 7-8.991 5.727a2 2 0 0 1-2.009 0L2 7", key: "132q7q" }],
     ["rect", { x: "2", y: "4", width: "20", height: "16", rx: "2", key: "izxlao" }]
   ];
-  var Mail = createLucideIcon("mail", __iconNode16);
+  var Mail = createLucideIcon("mail", __iconNode15);
 
   // node_modules/lucide-react/dist/esm/icons/pencil.js
-  var __iconNode17 = [
+  var __iconNode16 = [
     [
       "path",
       {
@@ -24829,14 +24817,21 @@
     ],
     ["path", { d: "m15 5 4 4", key: "1mk7zo" }]
   ];
-  var Pencil = createLucideIcon("pencil", __iconNode17);
+  var Pencil = createLucideIcon("pencil", __iconNode16);
 
   // node_modules/lucide-react/dist/esm/icons/plus.js
-  var __iconNode18 = [
+  var __iconNode17 = [
     ["path", { d: "M5 12h14", key: "1ays0h" }],
     ["path", { d: "M12 5v14", key: "s699le" }]
   ];
-  var Plus = createLucideIcon("plus", __iconNode18);
+  var Plus = createLucideIcon("plus", __iconNode17);
+
+  // node_modules/lucide-react/dist/esm/icons/search.js
+  var __iconNode18 = [
+    ["path", { d: "m21 21-4.34-4.34", key: "14j7rj" }],
+    ["circle", { cx: "11", cy: "11", r: "8", key: "4ej97u" }]
+  ];
+  var Search = createLucideIcon("search", __iconNode18);
 
   // node_modules/lucide-react/dist/esm/icons/trash-2.js
   var __iconNode19 = [
@@ -24856,6 +24851,13 @@
     ["circle", { cx: "9", cy: "7", r: "4", key: "nufk8" }]
   ];
   var Users = createLucideIcon("users", __iconNode20);
+
+  // node_modules/lucide-react/dist/esm/icons/x.js
+  var __iconNode21 = [
+    ["path", { d: "M18 6 6 18", key: "1bl5f8" }],
+    ["path", { d: "m6 6 12 12", key: "d8bk6v" }]
+  ];
+  var X = createLucideIcon("x", __iconNode21);
 
   // ui_src/components/Sidebar.jsx
   var import_react4 = __toESM(require_react());
@@ -38016,6 +38018,7 @@ ${String(r.error)}` : ""}`);
     const [qEnd, setQEnd] = (0, import_react11.useState)("");
     const [filters, setFilters] = (0, import_react11.useState)({ societe: "", action: "Tous", dateDebut: "", dateFin: "" });
     const [page, setPage] = (0, import_react11.useState)(1);
+    const [clientNames, setClientNames] = (0, import_react11.useState)([]);
     const limit = 10;
     const [rows, setRows] = (0, import_react11.useState)([]);
     const [total, setTotal] = (0, import_react11.useState)(0);
@@ -38047,10 +38050,30 @@ ${String(r.error)}` : ""}`);
       const time = d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
       return `En direct \xB7 ${time}`;
     }, [lastRefresh]);
-    const apply = () => {
-      setFilters({ societe: qSociete, action: qAction, dateDebut: qStart, dateFin: qEnd });
-      setPage(1);
-    };
+    (0, import_react11.useEffect)(() => {
+      let alive = true;
+      (async () => {
+        try {
+          const r = await window.api.admin.getClients();
+          if (!alive || !r?.success) return;
+          const names2 = (r.clients || []).map((c) => String(c?.company_name || c?.name || "").trim()).filter(Boolean);
+          setClientNames([...new Set(names2)].sort((a, b) => a.localeCompare(b, "fr")));
+        } catch (_) {
+        }
+      })();
+      return () => {
+        alive = false;
+      };
+    }, []);
+    (0, import_react11.useEffect)(() => {
+      const t = setTimeout(() => {
+        const next = { societe: qSociete.trim(), action: qAction, dateDebut: qStart, dateFin: qEnd };
+        if (filters.societe === next.societe && filters.action === next.action && filters.dateDebut === next.dateDebut && filters.dateFin === next.dateFin) return;
+        setFilters(next);
+        setPage(1);
+      }, 300);
+      return () => clearTimeout(t);
+    }, [qSociete, qAction, qStart, qEnd]);
     const reset = () => {
       setQSociete("");
       setQAction("Tous");
@@ -38080,7 +38103,24 @@ ${String(r.error)}` : ""}`);
         ] })
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: "logs-filters", children: [
-        /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("input", { className: "input", placeholder: "Soci\xE9t\xE9", value: qSociete, onChange: (e) => setQSociete(e.target.value) }),
+        /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("div", { className: "logs-search", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(Search, { size: 16, className: "logs-search-icon" }),
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(
+            "input",
+            {
+              className: "input",
+              placeholder: "Rechercher un client\u2026",
+              list: "logs-clients",
+              value: qSociete,
+              onChange: (e) => setQSociete(e.target.value),
+              onKeyDown: (e) => {
+                if (e.key === "Escape") setQSociete("");
+              }
+            }
+          ),
+          qSociete ? /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("button", { type: "button", className: "logs-search-clear", onClick: () => setQSociete(""), title: "Effacer", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(X, { size: 14 }) }) : null,
+          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("datalist", { id: "logs-clients", children: clientNames.map((n) => /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("option", { value: n }, n)) })
+        ] }),
         /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("select", { className: "input", value: qAction, onChange: (e) => setQAction(e.target.value), children: [
           /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("option", { children: "Tous" }),
           /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("option", { children: "Copi\xE9" }),
@@ -38088,10 +38128,6 @@ ${String(r.error)}` : ""}`);
         ] }),
         /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("input", { className: "input", type: "date", value: qStart, onChange: (e) => setQStart(e.target.value) }),
         /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("input", { className: "input", type: "date", value: qEnd, onChange: (e) => setQEnd(e.target.value) }),
-        /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("button", { className: "btn-primary", onClick: apply, disabled: loading, children: [
-          /* @__PURE__ */ (0, import_jsx_runtime9.jsx)(Funnel, { size: 18 }),
-          "Appliquer les filtres"
-        ] }),
         /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("button", { className: "link gray", onClick: reset, type: "button", children: "R\xE9initialiser les filtres" })
       ] }),
       /* @__PURE__ */ (0, import_jsx_runtime9.jsx)("div", { className: "logs-table-wrap", children: /* @__PURE__ */ (0, import_jsx_runtime9.jsxs)("table", { className: "logs-table", children: [
@@ -38941,7 +38977,6 @@ lucide-react/dist/esm/icons/copy.js:
 lucide-react/dist/esm/icons/cpu.js:
 lucide-react/dist/esm/icons/database.js:
 lucide-react/dist/esm/icons/download.js:
-lucide-react/dist/esm/icons/funnel.js:
 lucide-react/dist/esm/icons/loader-circle.js:
 lucide-react/dist/esm/icons/loader.js:
 lucide-react/dist/esm/icons/lock-open.js:
@@ -38950,8 +38985,10 @@ lucide-react/dist/esm/icons/log-out.js:
 lucide-react/dist/esm/icons/mail.js:
 lucide-react/dist/esm/icons/pencil.js:
 lucide-react/dist/esm/icons/plus.js:
+lucide-react/dist/esm/icons/search.js:
 lucide-react/dist/esm/icons/trash-2.js:
 lucide-react/dist/esm/icons/users.js:
+lucide-react/dist/esm/icons/x.js:
 lucide-react/dist/esm/lucide-react.js:
   (**
    * @license lucide-react v0.574.0 - ISC

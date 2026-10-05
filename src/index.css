@@ -2393,3 +2393,48 @@ body.login-body {
     margin-bottom: 12px;
   }
 }
+
+.logs-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 260px;
+  min-width: 220px;
+}
+
+.logs-search .input {
+  width: 100%;
+  padding-left: 32px;
+  padding-right: 30px;
+}
+
+.logs-search-icon {
+  position: absolute;
+  left: 10px;
+  color: #94a3b8;
+  pointer-events: none;
+}
+
+.logs-search-clear {
+  position: absolute;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: #f1f5f9;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.logs-search-clear:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.logs-search input::-webkit-calendar-picker-indicator {
+  display: none !important;
+}
