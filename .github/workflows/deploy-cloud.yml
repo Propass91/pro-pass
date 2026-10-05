@@ -1,0 +1,81 @@
+# Déploie le serveur cloud Pro-Pass (dossier cloud/) sur le serveur, puis le redémarre.
+#
+# Lancement : onglet "Actions" sur GitHub > "Déployer le serveur cloud" > "Run workflow",
+# en choisissant la branche à déployer.
+#
+# Secrets à créer (Settings > Secrets and variables > Actions) :
+#   DEPLOY_SSH_KEY   contenu de la clé privée SSH (id_propass)
+#   DEPLOY_HOST      adresse du serveur (ex. 87.106.233.224)
+#   DEPLOY_USER      utilisateur SSH (ex. root)
+#
+# Ne touche jamais à cloud/data/ (base de données), cloud/.env ni cloud/node_modules/.
+name: Déployer le serveur cloud
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-cloud
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      REMOTE_DIR: /root/pro-pass/cloud
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Vérifier la syntaxe
+        run: |
+          node --check cloud/server.js
+          node --check cloud/db.js
+
+      - name: Préparer SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          test -n "$DEPLOY_SSH_KEY" || { echo "Secret DEPLOY_SSH_KEY manquant"; exit 1; }
+          test -n "$DEPLOY_HOST" || { echo "Secret DEPLOY_HOST manquant"; exit 1; }
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Sauvegarder la version en place
+        env:
+          TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+        run: |
+          ssh -i ~/.ssh/id_deploy "$TARGET" \
+            "cd $REMOTE_DIR && tar czf /root/pro-pass-cloud-backup-\$(date +%Y%m%d-%H%M%S).tgz --exclude=node_modules --exclude=data ."
+
+      - name: Envoyer les fichiers
+        env:
+          TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+        run: |
+          rsync -az -e "ssh -i $HOME/.ssh/id_deploy" \
+            --exclude node_modules/ --exclude data/ --exclude .env \
+            cloud/ "$TARGET:$REMOTE_DIR/"
+
+      - name: Installer les dépendances et redémarrer
+        env:
+          TARGET: ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}
+        run: |
+          ssh -i ~/.ssh/id_deploy "$TARGET" bash -s <<EOF
+          set -e
+          cd $REMOTE_DIR
+          npm ci --omit=dev --no-audit --no-fund
+          if pm2 describe pro-pass-cloud >/dev/null 2>&1; then
+            pm2 restart pro-pass-cloud
+          elif pm2 describe pro-pass >/dev/null 2>&1; then
+            pm2 restart pro-pass
+          else
+            pm2 start server.js --name pro-pass-cloud
+            pm2 save
+          fi
+          EOF
+
+      - name: Nettoyer la clé
+        if: always()
+        run: rm -f ~/.ssh/id_deploy
