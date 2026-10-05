@@ -53,8 +53,12 @@ def main():
     for s in range(16):
         fb = s * 4
         _e(f"[*] S{s:02d}:", end=" ")
-        conn.transmit([0xFF,0x82,0x00,0x01,0x06]+PASS_OMEGA)
-        _, sw1, _ = conn.transmit([0xFF,0x86,0x00,0x00,0x05,0x01,0x00,fb,0x61,0x01])
+        # Chargement cle OMEGA (emplacement 1) + authentification Key B.
+        # On capture desormais le code retour du chargement de cle ET de
+        # l'authentification, pour diagnostiquer les echecs (au lieu d'un
+        # simple "ECHEC" qui masquait la vraie cause).
+        _, lb1, lb2 = conn.transmit([0xFF,0x82,0x00,0x01,0x06]+PASS_OMEGA)
+        _, sw1, sw1b = conn.transmit([0xFF,0x86,0x00,0x00,0x05,0x01,0x00,fb,0x61,0x01])
         if sw1 == 0x90:
             _e("OMEGA OK", end=" ")
             for b in range(fb, fb+4):
@@ -63,8 +67,9 @@ def main():
                 _e(f"B{b}:{'OK' if sw==0x90 else 'ERR'}", end=" ")
             _e()
         else:
-            conn.transmit([0xFF,0x82,0x00,0x00,0x06,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF])
-            _, sw2, _ = conn.transmit([0xFF,0x86,0x00,0x00,0x05,0x01,0x00,fb,0x60,0x00])
+            # Chargement cle par defaut (emplacement 0) + authentification Key A.
+            _, la1, la2 = conn.transmit([0xFF,0x82,0x00,0x00,0x06,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF])
+            _, sw2, sw2b = conn.transmit([0xFF,0x86,0x00,0x00,0x05,0x01,0x00,fb,0x60,0x00])
             if sw2 == 0x90:
                 _e("KeyA OK", end=" ")
                 for b in range(fb, fb+4):
@@ -73,7 +78,10 @@ def main():
                     _e(f"B{b}:{'OK' if sw==0x90 else 'ERR'}", end=" ")
                 _e()
             else:
-                _e("ECHEC"); fm.extend([0]*64)
+                _e("ECHEC "
+                   f"[loadB:{lb1:02X}{lb2:02X} authB:{sw1:02X}{sw1b:02X} "
+                   f"loadA:{la1:02X}{la2:02X} authA:{sw2:02X}{sw2b:02X}]")
+                fm.extend([0]*64)
 
     open(op,'wb').write(fm)
     _e(f"[V] {len(fm)} octets -> {op}")
