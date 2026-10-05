@@ -37867,7 +37867,11 @@ ${String(r.error)}` : ""}`);
                   {
                     className: "icon-btn",
                     title: "Voir les logs de ce client",
-                    onClick: () => navigate(`/history?clientId=${r.id}&societe=${encodeURIComponent(r.company_name || r.name || r.username || "")}`),
+                    onClick: () => navigate(`/history?${new URLSearchParams({
+                      clientId: String(r.id),
+                      societe: String(r.company_name || r.name || r.username || ""),
+                      username: String(r.username || "")
+                    }).toString()}`),
                     children: /* @__PURE__ */ (0, import_jsx_runtime7.jsx)(ScrollText, { size: 18 })
                   }
                 ),
@@ -38087,6 +38091,7 @@ ${String(r.error)}` : ""}`);
     const [searchParams, setSearchParams] = useSearchParams();
     const urlClientId = searchParams.get("clientId") || "";
     const urlSociete = searchParams.get("societe") || "";
+    const urlUsername = searchParams.get("username") || "";
     const [qSociete, setQSociete] = (0, import_react11.useState)(urlClientId ? "" : urlSociete);
     const [qAction, setQAction] = (0, import_react11.useState)("Tous");
     const [qStart, setQStart] = (0, import_react11.useState)("");
@@ -38097,6 +38102,7 @@ ${String(r.error)}` : ""}`);
       clientId: urlClientId
     });
     const [clientNames, setClientNames] = (0, import_react11.useState)([]);
+    const clientNameFilters = filters.clientId ? { clientName: urlSociete, clientUsername: urlUsername } : {};
     const [page, setPage] = (0, import_react11.useState)(1);
     const limit = 10;
     const [rows, setRows] = (0, import_react11.useState)([]);
@@ -38107,7 +38113,7 @@ ${String(r.error)}` : ""}`);
     const load = async ({ silent = false } = {}) => {
       if (!silent) setLoading(true);
       try {
-        const r = await window.api.admin.getLogs({ ...filters, page, limit });
+        const r = await window.api.admin.getLogs({ ...filters, ...clientNameFilters, page, limit });
         if (r?.success) {
           setRows(Array.isArray(r.rows) ? r.rows : []);
           setTotal(Number(r.total || 0));
@@ -38172,7 +38178,7 @@ ${String(r.error)}` : ""}`);
     };
     const exportCsv = async () => {
       try {
-        await window.api.admin.exportLogs(filters);
+        await window.api.admin.exportLogs({ ...filters, ...clientNameFilters });
       } catch (_) {
       }
     };

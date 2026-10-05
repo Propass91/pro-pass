@@ -32,6 +32,7 @@ export default function Logs() {
   const [searchParams, setSearchParams] = useSearchParams();
   const urlClientId = searchParams.get('clientId') || '';
   const urlSociete = searchParams.get('societe') || '';
+  const urlUsername = searchParams.get('username') || '';
 
   const [qSociete, setQSociete] = useState(urlClientId ? '' : urlSociete);
   const [qAction, setQAction] = useState('Tous');
@@ -44,6 +45,8 @@ export default function Logs() {
     clientId: urlClientId
   });
   const [clientNames, setClientNames] = useState([]);
+  // Lets locally stored logs without client_id still match this client
+  const clientNameFilters = filters.clientId ? { clientName: urlSociete, clientUsername: urlUsername } : {};
   const [page, setPage] = useState(1);
   const limit = 10;
 
@@ -56,7 +59,7 @@ export default function Logs() {
   const load = async ({ silent = false } = {}) => {
     if (!silent) setLoading(true);
     try {
-      const r = await window.api.admin.getLogs({ ...filters, page, limit });
+      const r = await window.api.admin.getLogs({ ...filters, ...clientNameFilters, page, limit });
       if (r?.success) {
         setRows(Array.isArray(r.rows) ? r.rows : []);
         setTotal(Number(r.total || 0));
@@ -132,7 +135,7 @@ export default function Logs() {
 
   const exportCsv = async () => {
     try {
-      await window.api.admin.exportLogs(filters);
+      await window.api.admin.exportLogs({ ...filters, ...clientNameFilters });
     } catch (_) {
       // ignore
     }

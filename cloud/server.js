@@ -362,7 +362,7 @@ app.post('/auth/login', (req, res) => {
     if (!client || !client.password_hash) return { ok: false, error: 'invalid_credentials' };
     if (!verifyPassword(String(password), String(client.password_hash))) return { ok: false, error: 'invalid_credentials' };
     const token = signUserJwt({ id: client.id, username: client.username, role: 'client' });
-    return { ok: true, token, role: 'client', client: { id: client.id, username: client.username, name: client.name, email: client.email } };
+    return { ok: true, token, role: 'client', client: { id: client.id, username: client.username, name: client.name, email: client.email, company_name: client.company_name || null } };
   });
 
   if (!out.ok) return res.status(401).json(out);

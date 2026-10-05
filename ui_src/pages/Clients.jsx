@@ -205,7 +205,11 @@ export default function Clients() {
                       <button
                         className="icon-btn"
                         title="Voir les logs de ce client"
-                        onClick={() => navigate(`/history?clientId=${r.id}&societe=${encodeURIComponent(r.company_name || r.name || r.username || '')}`)}
+                        onClick={() => navigate(`/history?${new URLSearchParams({
+                          clientId: String(r.id),
+                          societe: String(r.company_name || r.name || r.username || ''),
+                          username: String(r.username || '')
+                        }).toString()}`)}
                       >
                         <ScrollText size={18} />
                       </button>
